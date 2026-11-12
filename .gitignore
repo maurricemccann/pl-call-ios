@@ -1,0 +1,9 @@
+.DS_Store
+build/
+Payload/
+*.ipa
+xcuserdata/
+DerivedData/
+*.xcuserstate
+plcall-config*.json
+*.plcall

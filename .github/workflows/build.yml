@@ -1,0 +1,49 @@
+name: build
+
+# Started by hand only. Builds an unsigned .ipa; SideStore signs it on the phone.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project PLCall.xcodeproj \
+            -target PLCall \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/PLCall.app Payload/
+          zip -qr PLCall.ipa Payload
+          ls -l PLCall.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PLCall-ipa
+          path: PLCall.ipa
+          retention-days: 14
