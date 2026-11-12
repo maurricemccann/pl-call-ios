@@ -1,0 +1,101 @@
+import UserNotifications
+
+/// Local notifications for approvals: Approve first (the watch's Double Tap runs the first non-destructive action),
+/// then Deny, then Reply with a short typed or dictated message. No push, no time-sensitive level.
+/// Unchecked Sendable: it holds no state.
+final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+    static let shared = NotificationHub()
+
+    static let category = "ask.permission"
+    static let approveID = "ask.approve"
+    static let denyID = "ask.deny"
+    static let replyID = "ask.reply"
+    static let probePrefix = "probe."
+
+    /// Called from the app's init: the delegate and categories must exist before launch ends,
+    /// and waking the model here sets the intent hooks even when no screen is ever shown.
+    @MainActor func start() {
+        register()
+        _ = CallModel.shared
+    }
+
+    func register() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let approve = UNNotificationAction(identifier: Self.approveID, title: "Approve", options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: Self.denyID, title: "Deny", options: [.destructive])
+        // A reply can approve ("yes, go ahead"), so it needs the same unlock as Approve.
+        let reply = UNTextInputNotificationAction(identifier: Self.replyID, title: "Reply", options: [.authenticationRequired],
+                                                  textInputButtonTitle: "Send", textInputPlaceholder: "A short message")
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.category, actions: [approve, deny, reply], intentIdentifiers: [], options: [])
+        ])
+    }
+
+    func authorize() async -> Bool {
+        await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { @Sendable granted, _ in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    func postPermission(requestID: String, toolUseID: String?, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Claude needs your answer"
+        content.body = body
+        content.sound = .default
+        content.categoryIdentifier = Self.category
+        content.userInfo = ["requestId": requestID, "toolUseId": toolUseID ?? ""]
+        post(content, identifier: "ask." + requestID)
+    }
+
+    /// A question has options, which a notification cannot hold: it only says one is waiting.
+    func postQuestion(requestID: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Claude has a question"
+        content.body = body
+        content.sound = .default
+        post(content, identifier: "ask." + requestID)
+    }
+
+    func postProbe() {
+        let content = UNMutableNotificationContent()
+        content.title = "Probe"
+        content.body = "Pull down, press Reply and send a word."
+        content.sound = .default
+        content.categoryIdentifier = Self.category
+        post(content, identifier: Self.probePrefix + UUID().uuidString)
+    }
+
+    func clear(requestID: String) {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["ask." + requestID])
+    }
+
+    private func post(_ content: UNMutableNotificationContent, identifier: String) {
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)   // nil = now
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
+        // The response is not Sendable: copy plain strings out before the task.
+        let action = response.actionIdentifier
+        let typed = (response as? UNTextInputNotificationResponse)?.userText
+        let request = response.notification.request
+        let identifier = request.identifier
+        let requestID = request.content.userInfo["requestId"] as? String
+        let toolUseID = request.content.userInfo["toolUseId"] as? String
+        Task { @MainActor in
+            await CallModel.shared.notificationAction(action, text: typed, identifier: identifier, requestID: requestID, toolUseID: toolUseID)
+            completionHandler()
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
+        // With the app open the approve card is already on screen; only the probe's notice shows on top.
+        let isProbe = notification.request.identifier.hasPrefix(Self.probePrefix)
+        completionHandler(isProbe ? [.banner, .list, .sound] : [])
+    }
+}

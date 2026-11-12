@@ -1,0 +1,1041 @@
+import Foundation
+import Observation
+import UIKit
+import WidgetKit
+
+struct Turn: Identifiable, Equatable {
+    let id: UUID
+    var who: Who
+    var text: String
+    var date: Date
+
+    enum Who { case me, claude, system }
+}
+
+/// The call. One object drives the screen, the Live Activity, the widgets, the controls and the notifications.
+/// The loop: listen, a pause ends his turn, send, speak the answer, listen again.
+@MainActor @Observable final class CallModel {
+    static let shared = CallModel()
+
+    // MARK: state the screens read
+
+    var state: CallState = .idle
+    var statusLine = Say.load
+    var turns: [Turn] = []
+    var isInCall = false
+    var handsFree = true
+    var voices: [PLCallConfig.Voice] = []
+    var voiceID = Speaker.phone
+    var quickReplies: [PLCallConfig.QuickReply] = []
+    var armedReply: String?
+    var pendingAsk: Ask?
+    var hasConfig = false
+    var configError: String?
+    var micLevel: Double = 0
+    var isClaudeTyping = false
+    var sessionTitle: String?
+    var lastError: String?
+    let probe = ProbeModel()
+
+    // MARK: the parts
+
+    @ObservationIgnored fileprivate var line: LineClient?
+    fileprivate let callKit = CallKitManager()
+    fileprivate let activity = LiveActivityController()
+    fileprivate let head = HeadMotion()
+    private let store = ConfigStore()
+    private let listener = SpeechListener()
+    private let speaker = Speaker()
+    private let remote = RemoteCommands()
+    @ObservationIgnored private var config: PLCallConfig?
+    @ObservationIgnored private var reducer = EventReducer()
+    @ObservationIgnored private var arm = QuickReplyArm()
+    @ObservationIgnored private var sid: String?
+    @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var lineGeneration = 0
+    @ObservationIgnored private var loading: Task<Void, Never>?
+    @ObservationIgnored private var routeTask: Task<Void, Never>?
+    @ObservationIgnored private var armed = false            // PUSH mode: one turn was asked for
+    @ObservationIgnored private var awaitingReply = false    // something was sent and Claude's turn has not ended
+    @ObservationIgnored private var heldReply: String?       // an answer that arrived while he was mid-sentence
+    @ObservationIgnored private var ownsAudio = false        // the session was activated here, not by CallKit
+
+    private enum Say {
+        static let load = "Load your config"
+        static let ready = "Line ready. Press to call"
+        static let connecting = "Connecting"
+        static let listening = "Listening"
+        static let hearing = "Hearing"
+        static let pressToTalk = "Press to talk"
+        static let working = "Claude is working"
+        static let speaking = "Speaking"
+        static let waiting = "Waiting for your answer"
+        static let noSession = "No live session. Start Claude Code on the PC first."
+        static let keyRefused = "The call key was refused. Load your config again."
+        static let title = "Claude"
+    }
+
+    private enum Keys {
+        static let voice = "plcall.voice"
+        static let handsFree = "plcall.handsFree"
+        static let systemFont = "plcall.usesSystemFont"
+    }
+
+    private init() {
+        handsFree = UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool ?? true
+        wire()
+        activity.endStale()
+        loading = Task { await self.restore() }
+        Task {
+            for await event in self.listener.events { self.heard(event) }
+        }
+    }
+
+    // MARK: config
+
+    func loadConfig(from url: URL) async {
+        do {
+            let loaded = try await store.load(from: url)
+            dropLine()
+            apply(loaded)
+        } catch let problem as PLCallConfig.Problem {
+            configError = problem.description
+        } catch {
+            configError = "That file could not be read."
+        }
+    }
+
+    func forgetConfig() {
+        if isInCall { endCall() }
+        dropLine()
+        config = nil
+        line = nil
+        hasConfig = false
+        voices = []
+        quickReplies = []
+        sessionTitle = nil
+        isClaudeTyping = false
+        awaitingReply = false
+        if let ask = pendingAsk { resolve(ask) }
+        UserDefaults.standard.removeObject(forKey: Keys.systemFont)
+        let store = self.store
+        Task { await store.forget() }
+        set(.idle, Say.load)
+    }
+
+    private func restore() async {
+        if let saved = await store.saved() { apply(saved) }
+    }
+
+    private func apply(_ config: PLCallConfig) {
+        self.config = config
+        line = LineClient(config: config)
+        voices = config.voiceList
+        quickReplies = config.quickReplyList
+        if let saved = UserDefaults.standard.string(forKey: Keys.voice), voices.contains(where: { $0.id == saved }) {
+            voiceID = saved
+        } else {
+            voiceID = config.startingVoice
+        }
+        UserDefaults.standard.set(config.usesSystemFont, forKey: Keys.systemFont)
+        hasConfig = true
+        configError = nil
+        lastError = nil
+        set(.idle, Say.ready)
+        connect()
+    }
+
+    private func dropLine() {
+        lineGeneration += 1
+        streamTask?.cancel()
+        streamTask = nil
+        sid = nil
+        reducer = EventReducer()
+    }
+
+    private func refuseKey() {
+        configError = Say.keyRefused
+        hasConfig = false
+        dropLine()
+        if isInCall { endCall() }
+        set(.idle, Say.load)
+    }
+
+    // MARK: the call
+
+    func startCall() {
+        guard hasConfig, !isInCall else { return }
+        isInCall = true
+        lastError = nil
+        activity.start(title: Say.title)   // in the same step as the mic: a call started from a control stops recording without it
+        set(.connecting, Say.connecting)
+        Task {
+            guard await AudioSessionManager.micAllowed() else {
+                self.finishCall("Allow the microphone for Call in Settings.")
+                return
+            }
+            _ = await NotificationHub.shared.authorize()
+            guard self.isInCall else { return }
+            self.callKit.startCall()
+        }
+    }
+
+    /// A control can launch the process cold, before the saved config is read back. The Live Activity must still start
+    /// inside the intent's own step, so it starts first and the call follows once the config is in.
+    private func startFromIntent() {
+        guard !hasConfig else {
+            startCall()
+            return
+        }
+        activity.start(title: Say.title)
+        Task {
+            _ = await self.loading?.value
+            if self.hasConfig { self.startCall() } else { self.activity.end() }
+        }
+    }
+
+    func endCall() {
+        guard isInCall else { return }
+        if !callKit.endCall() { finishCall() }
+    }
+
+    /// PUSH mode, the headset press and the Talk button: stop the voice and take one turn.
+    func talk() {
+        guard isInCall else {
+            startCall()
+            return
+        }
+        speaker.stop()
+        armed = true
+        updateGate()
+        let listener = self.listener
+        Task {
+            await listener.discard()
+            if self.pendingAsk == nil, self.isInCall { self.set(.listening, Say.listening) }
+        }
+    }
+
+    func replay() {
+        let last = reducer.lastSaid
+        guard !last.isEmpty else {
+            statusLine = "Nothing to replay yet."
+            return
+        }
+        voice(last)
+    }
+
+    func tapQuickReply(_ r: PLCallConfig.QuickReply) {
+        switch arm.tap(r, now: Date().timeIntervalSinceReferenceDate) {
+        case .send(let text):
+            armedReply = nil
+            send(text: text)
+        case .armed(let label):
+            armedReply = label
+            Task {
+                try? await Task.sleep(for: .seconds(QuickReplyArm.window))
+                if self.armedReply == label { self.armedReply = nil }
+            }
+        }
+    }
+
+    /// Typed text and quick replies go down the same road as his voice.
+    func send(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, hasConfig else { return }
+        speaker.stop()
+        took(trimmed)
+    }
+
+    func answerPermission(allow: Bool, message: String?) {
+        probe.sawIntent()
+        guard let ask = pendingAsk, case .permission(let requestID, let toolUseID, _, _) = ask else { return }
+        resolve(ask)
+        note(allow ? "Allowed." : "Denied.")
+        guard let line, let sid else {
+            note(Say.noSession)
+            rest()
+            return
+        }
+        sentSomething()
+        Task {
+            do {
+                try await line.permission(sid: sid, requestID: requestID, toolUseID: toolUseID, allow: allow, message: message)
+            } catch {
+                self.sendFailed(error)
+            }
+        }
+    }
+
+    func answerQuestion(option: Int) {
+        guard let ask = pendingAsk, case .question(let requestID, let toolUseID, let question, let input) = ask,
+              question.options.indices.contains(option) else { return }
+        resolve(ask)
+        note("Answered: \(question.options[option])")
+        guard let line, let sid else {
+            note(Say.noSession)
+            rest()
+            return
+        }
+        sentSomething()
+        Task {
+            do {
+                try await line.dialog(sid: sid, requestID: requestID, toolUseID: toolUseID, question: question, option: option, input: input)
+            } catch {
+                self.sendFailed(error)
+            }
+        }
+    }
+
+    func selectVoice(_ id: String) {
+        guard voices.contains(where: { $0.id == id }) else { return }
+        voiceID = id
+        UserDefaults.standard.set(id, forKey: Keys.voice)
+    }
+
+    func previewVoice(_ id: String) {
+        voice("This is the voice I will use on the call.", voiceID: id)
+    }
+
+    func setHandsFree(_ on: Bool) {
+        handsFree = on
+        UserDefaults.standard.set(on, forKey: Keys.handsFree)
+        armed = false
+        updateGate()
+        if isInCall, !speaker.isSpeaking, state != .hearing { rest() }
+    }
+
+    // MARK: called by the other engine parts
+
+    /// A notification action. It may arrive in a process the system just launched in the background, so it waits for the config.
+    func notificationAction(_ action: String, text: String?, identifier: String, requestID: String?, toolUseID: String?) async {
+        if identifier.hasPrefix(NotificationHub.probePrefix) {
+            probe.sawNotification(action: action, text: text)
+            return
+        }
+        let allow: Bool
+        switch action {
+        case NotificationHub.approveID: allow = true
+        case NotificationHub.denyID: allow = false
+        case NotificationHub.replyID: allow = SpokenAnswer.decision(text ?? "") ?? false   // a reply that is not a clear yes denies, with his words
+        default: return                                                                     // a plain tap only opens the app
+        }
+        _ = await loading?.value
+        guard let requestID, !requestID.isEmpty, let line else { return }
+        if let ask = pendingAsk, case .permission(let waiting, _, _, _) = ask, waiting == requestID {
+            resolve(ask)
+            note(allow ? "Allowed." : "Denied.")
+        }
+        do {
+            if sid == nil { sid = try await line.sessions().first?.id }
+            guard let sid else { return }
+            sentSomething()
+            let tool = (toolUseID?.isEmpty ?? true) ? nil : toolUseID
+            try await line.permission(sid: sid, requestID: requestID, toolUseID: tool, allow: allow, message: text)
+        } catch {
+            sendFailed(error)
+        }
+    }
+
+    /// A nod approves and a shake denies, only while a permission waits.
+    func headGesture(_ gesture: HeadGesture) {
+        if probe.sawHead(gesture) { return }
+        guard let ask = pendingAsk, case .permission = ask else { return }
+        answerPermission(allow: gesture == .nod, message: nil)
+    }
+
+    // MARK: wiring
+
+    private func wire() {
+        speaker.onFinished = { [weak self] in self?.spokeDone() }
+        speaker.onFailed = { [weak self] message in self?.voiceFailed(message) }
+        callKit.onStarted = { [weak self] in self?.remote.enable() }
+        callKit.onStartFailed = { [weak self] reason in self?.startWithoutCallKit(reason) }
+        callKit.onAudioActive = { [weak self] in self?.audioActivated() }
+        callKit.onAudioInactive = { [weak self] in self?.audioDeactivated() }
+        callKit.onEnded = { [weak self] in self?.finishCall() }
+        callKit.onAnswered = { [weak self] in self?.ringAnswered() }
+        callKit.onDeclined = { [weak self] in _ = self?.probe.sawRing(answered: false) }
+        callKit.onMuteToggled = { [weak self] in self?.talk() }
+        IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
+        IntentBridge.deny = { [weak self] message in self?.answerPermission(allow: false, message: message) }
+        IntentBridge.endCall = { [weak self] in self?.endCall() }
+        IntentBridge.startCall = { [weak self] in
+            self?.probe.sawIntent()
+            self?.startFromIntent()
+        }
+        IntentBridge.replay = { [weak self] in self?.replay() }
+        IntentBridge.talk = { [weak self] in self?.talk() }
+        NotificationHub.shared.register()
+        AudioSessionManager.observe { change in
+            Task { @MainActor in CallModel.shared.audioChanged(change) }
+        }
+    }
+
+    // MARK: the line
+
+    private func connect() {
+        guard let line, hasConfig, streamTask == nil else { return }
+        let generation = lineGeneration
+        streamTask = Task { await self.runLine(line, generation: generation) }
+    }
+
+    private func runLine(_ line: LineClient, generation: Int) async {
+        do {
+            guard let session = try await line.sessions().first else { throw LineClient.Failure.noSession }
+            let backlog = try await line.events(sid: session.id, limit: 60)
+            guard generation == lineGeneration else { return }
+            sid = session.id
+            sessionTitle = session.title ?? session.id
+            reducer.prime(backlog)
+            lineIsUp(true)
+            let stream = line.stream(sid: session.id, fromSeq: reducer.lastSeq) { up in
+                Task { @MainActor in CallModel.shared.lineIsUp(up, generation: generation) }
+            }
+            for try await event in stream {
+                guard generation == lineGeneration else { return }
+                took(event)
+            }
+        } catch {
+            guard generation == lineGeneration else { return }
+            lineFailed(error)
+        }
+        guard generation == lineGeneration else { return }
+        streamTask = nil
+        try? await Task.sleep(for: .seconds(5))   // then look for the session again
+        guard generation == lineGeneration else { return }
+        connect()
+    }
+
+    private func lineIsUp(_ up: Bool, generation: Int? = nil) {
+        if let generation, generation != lineGeneration { return }
+        if up {
+            lastError = nil
+            if state == .lost { rest() }
+        } else if isInCall {
+            set(.lost, "The line dropped. Reconnecting")
+        } else {
+            lastError = "The PC is not answering. Check that Tailscale is on."
+        }
+    }
+
+    private func lineFailed(_ error: any Error) {
+        if let failure = error as? LineClient.Failure, failure == .unauthorized {
+            refuseKey()
+            return
+        }
+        let message = plainSentence(error)
+        lastError = message
+        if isInCall { set(.lost, message) }
+    }
+
+    private func took(_ event: SessionEvent) {
+        let before = reducer.lastSeq
+        let outputs = reducer.ingest(event)
+        guard reducer.lastSeq != before else { return }
+        if outputs.isEmpty, let ask = pendingAsk, event.type != "control_request", event.isBlockingControl != true {
+            // The session moved on: the ask was answered on the PC or another screen.
+            resolve(ask)
+            rest()
+        }
+        for output in outputs {
+            switch output {
+            case .transcript(let text):
+                append(.claude, text)
+            case .speak(let text):
+                awaitingReply = false
+                isClaudeTyping = false
+                if state == .hearing { heldReply = text } else { say(text) }   // never talk over him mid-sentence
+            case .ask(let ask):
+                awaitingReply = false
+                isClaudeTyping = false
+                raise(ask)
+            }
+        }
+    }
+
+    /// His words, spoken or typed: an answer when something is waiting, else a message to the session.
+    private func took(_ text: String) {
+        armed = false
+        append(.me, text)
+        if let ask = pendingAsk { answer(text, to: ask) } else { deliver(text) }
+    }
+
+    private func deliver(_ text: String) {
+        guard let line, let sid else {
+            note(Say.noSession)
+            rest()
+            return
+        }
+        sentSomething()
+        Task {
+            do {
+                try await line.send(sid: sid, text: text)
+            } catch {
+                self.sendFailed(error)
+            }
+        }
+    }
+
+    private func sentSomething() {
+        reducer.sent()
+        awaitingReply = true
+        isClaudeTyping = true
+        rest()
+    }
+
+    private func sendFailed(_ error: any Error) {
+        awaitingReply = false
+        isClaudeTyping = false
+        if let failure = error as? LineClient.Failure, failure == .unauthorized {
+            refuseKey()
+            return
+        }
+        let message = "Could not send: " + plainSentence(error)
+        note(message)
+        lastError = message
+        rest()
+    }
+
+    // MARK: asks
+
+    private func raise(_ ask: Ask) {
+        pendingAsk = ask
+        switch ask {
+        case .permission(let requestID, let toolUseID, let forWhat, let what):
+            let line = forWhat + " Say approve or deny."
+            append(.claude, what.isEmpty ? line : line + "\n" + what)
+            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat)
+            head.start()
+        case .question(let requestID, _, let question, _):
+            append(.claude, spokenLine(for: ask))
+            NotificationHub.shared.postQuestion(requestID: requestID, body: question.question)
+        }
+        updateGate()
+        state = .waitingApproval
+        statusLine = Say.waiting
+        publish(alert: true)
+        if isInCall {
+            speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line)
+        } else if UIApplication.shared.applicationState != .active {
+            let reason = askText ?? Say.title
+            Task {
+                if let refused = await self.callKit.ring(reason: reason) { self.lastError = "The ring was refused: \(refused)" }
+            }
+        }
+    }
+
+    private func spokenLine(for ask: Ask) -> String {
+        switch ask {
+        case .permission(_, _, let forWhat, _):
+            return forWhat + " Say approve or deny."
+        case .question(_, _, let question, _):
+            let options = question.options.enumerated().map { "Option \($0.offset + 1): \($0.element)." }.joined(separator: " ")
+            return question.question + " " + options
+        }
+    }
+
+    /// The ask is settled, here or anywhere else: take it off every surface at once.
+    private func resolve(_ ask: Ask) {
+        switch ask {
+        case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
+        case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
+        }
+        pendingAsk = nil
+        head.stop()
+        speaker.stop()
+        updateGate()
+        publish()
+    }
+
+    private func answer(_ text: String, to ask: Ask) {
+        switch ask {
+        case .permission:
+            if let allow = SpokenAnswer.decision(text) {
+                answerPermission(allow: allow, message: nil)
+            } else if isInCall {
+                speaker.speak("I did not catch that. Say approve or deny.", voiceID: voiceID, line: line)
+            } else {
+                statusLine = "Press Approve or Deny."
+            }
+        case .question(_, _, let question, _):
+            if let index = SpokenAnswer.option(text, of: question) {
+                answerQuestion(option: index)
+            } else {
+                // Not one of the options: he is talking, not answering, so it goes to the session as a message.
+                resolve(ask)
+                deliver(text)
+            }
+        }
+    }
+
+    private var askText: String? {
+        switch pendingAsk {
+        case .permission(_, _, let forWhat, _)?: return forWhat
+        case .question(_, _, let question, _)?: return question.question
+        case nil: return nil
+        }
+    }
+
+    // MARK: ears
+
+    private func heard(_ event: SpeechListener.Event) {
+        guard isInCall else { return }
+        switch event {
+        case .level(let level):
+            probe.micHeard(level, inBackground: UIApplication.shared.applicationState != .active)
+            micLevel = (state == .listening || state == .hearing) ? level : 0
+        case .hearing(let text):
+            if speaker.isSpeaking {
+                guard isBargeIn(text) else { return }
+                speaker.stop()   // he spoke over the voice: it stops at once
+            }
+            if state != .hearing { set(.hearing, Say.hearing) }
+            statusLine = "Hearing: \(text)"
+        case .turn(let text):
+            guard !speaker.isSpeaking else { return }
+            took(text)
+        case .failed(let message):
+            lastError = message
+            set(.lost, message)
+        }
+    }
+
+    /// Echo cancellation is not proven on this path, so the voice's own words coming back through the mic are not a barge-in:
+    /// it needs two words or more, at least half of them words Claude is not saying right now.
+    private func isBargeIn(_ heard: String) -> Bool {
+        let words = heard.lowercased().split { !$0.isLetter }.map(String.init)
+        guard words.count >= 2 else { return false }
+        let spoken = Set(speaker.speakingText.lowercased().split { !$0.isLetter }.map(String.init))
+        let own = words.filter { !spoken.contains($0) }.count
+        return own * 2 >= words.count
+    }
+
+    /// The mic feeds the transcriber only when a turn is wanted: hands-free, one pressed turn, or an answer.
+    private func updateGate() {
+        listener.setAccepting(isInCall && (handsFree || armed || pendingAsk != nil))
+    }
+
+    // MARK: voice
+
+    private func say(_ text: String) {
+        guard isInCall else {
+            rest()
+            return
+        }
+        voice(text)
+    }
+
+    private func voice(_ text: String, voiceID id: String? = nil) {
+        if !isInCall {
+            do {
+                try AudioSessionManager.activate()
+            } catch {
+                lastError = "The speaker is not available: \(error.localizedDescription)"
+                return
+            }
+        }
+        set(.speaking, Say.speaking)
+        speaker.speak(text, voiceID: id ?? voiceID, line: line)
+    }
+
+    private func spokeDone() {
+        guard isInCall else {
+            AudioSessionManager.deactivate()
+            rest()
+            return
+        }
+        let listener = self.listener
+        Task {
+            await listener.discard()   // whatever the mic caught of the voice itself
+            self.rest()
+        }
+    }
+
+    private func voiceFailed(_ message: String) {
+        note(message)
+        lastError = message
+        if !isInCall { AudioSessionManager.deactivate() }
+        rest(message)
+    }
+
+    // MARK: call lifecycle
+
+    private func startWithoutCallKit(_ reason: String) {
+        guard isInCall else { return }
+        do {
+            try AudioSessionManager.activate()
+            ownsAudio = true
+            remote.enable()
+            note("The system refused the call (\(reason)). It runs without it, and may stop when the phone locks.")
+            audioActivated()
+        } catch {
+            finishCall("The microphone could not be opened.")
+        }
+    }
+
+    private func audioActivated() {
+        guard isInCall, let config else { return }
+        connect()
+        let listener = self.listener
+        Task {
+            do {
+                try await listener.start(endOfTurn: config.endOfTurn, endOfTurnInterim: config.endOfTurnInterim)
+            } catch {
+                self.finishCall(plainSentence(error))
+                if self.callKit.hasCall { self.callKit.endCall() }
+                return
+            }
+            guard self.isInCall else {
+                await listener.stop()
+                return
+            }
+            self.callKit.reportConnected()
+            guard self.state == .connecting || self.state == .lost else { return }
+            self.rest()
+            if let ask = self.pendingAsk { self.speaker.speak(self.spokenLine(for: ask), voiceID: self.voiceID, line: self.line) }
+        }
+    }
+
+    private func audioDeactivated() {
+        guard isInCall else { return }
+        speaker.stop()
+        set(.lost, "The call's audio was taken by something else.")
+    }
+
+    private func audioChanged(_ change: AudioSessionManager.Change) {
+        guard isInCall else { return }
+        let listener = self.listener
+        switch change {
+        case .interrupted:
+            speaker.stop()
+            set(.lost, "The call's audio was interrupted.")
+        case .resumed:
+            Task {
+                await listener.restartMic()
+                if self.isInCall, self.state == .lost { self.rest() }
+            }
+        case .routeChanged, .engineReset:
+            routeTask?.cancel()
+            routeTask = Task {
+                try? await Task.sleep(for: .milliseconds(400))   // several notices arrive for one AirPods change
+                guard !Task.isCancelled else { return }
+                await listener.restartMic()
+            }
+        }
+    }
+
+    private func ringAnswered() {
+        if probe.sawRing(answered: true) {
+            callKit.endCall()
+            return
+        }
+        guard hasConfig, !isInCall else {
+            if !hasConfig { callKit.endCall() }
+            return
+        }
+        isInCall = true
+        activity.start(title: Say.title)
+        remote.enable()
+        set(.connecting, Say.connecting)
+    }
+
+    private func finishCall(_ message: String? = nil) {
+        guard isInCall else { return }
+        isInCall = false
+        armed = false
+        armedReply = nil
+        heldReply = nil
+        micLevel = 0
+        speaker.stop()
+        remote.disable()
+        let listener = self.listener
+        let releaseAudio = ownsAudio
+        ownsAudio = false
+        Task {
+            await listener.stop()
+            if releaseAudio { AudioSessionManager.deactivate() }
+        }
+        note("Call ended.")
+        if let message { lastError = message }
+        rest(message)
+        activity.end()
+    }
+
+    // MARK: state
+
+    /// Where the call settles when nothing is being said: the one place that decides the resting state.
+    private func rest(_ line: String? = nil) {
+        updateGate()
+        if let held = heldReply, isInCall {
+            heldReply = nil
+            say(held)
+            return
+        }
+        if pendingAsk != nil {
+            set(.waitingApproval, line ?? Say.waiting)
+        } else if awaitingReply {
+            set(.working, line ?? Say.working)
+        } else if !isInCall {
+            set(.idle, line ?? (hasConfig ? Say.ready : Say.load))
+        } else if handsFree || armed {
+            set(.listening, line ?? Say.listening)
+        } else {
+            set(.idle, line ?? Say.pressToTalk)   // PUSH mode between turns: in the call, mic closed
+        }
+    }
+
+    private func set(_ newState: CallState, _ line: String) {
+        state = newState
+        statusLine = line
+        if newState != .listening && newState != .hearing { micLevel = 0 }
+        publish()
+    }
+
+    /// Every surface outside the app hears about every change.
+    private func publish(alert: Bool = false) {
+        SharedState.write(state: state, line: statusLine, ask: askText)
+        ControlCenter.shared.reloadAllControls()
+        activity.update(state: state, line: statusLine, ask: pendingAsk, alert: alert)
+    }
+
+    private func append(_ who: Turn.Who, _ text: String) {
+        turns.append(Turn(id: UUID(), who: who, text: text, date: Date()))
+        if turns.count > 400 { turns.removeFirst(turns.count - 400) }
+    }
+
+    private func note(_ text: String) {
+        append(.system, text)
+    }
+}
+
+/// The capability probe: each item really exercises the feature and says pass or fail with the reason.
+/// Nothing about a free-signed install is believed until it passes here.
+@MainActor @Observable final class ProbeModel {
+    struct Item: Identifiable {
+        let id: String
+        var title: String
+        var detail: String
+        var result: Result
+
+        enum Result { case untested, running, pass, fail(String) }
+    }
+
+    var items: [Item] = [
+        Item(id: "line", title: "Line to the PC", detail: "Reaches the PC and checks the certificate name.", result: .untested),
+        Item(id: "speech", title: "On-device transcription", detail: "Checks the speech model.", result: .untested),
+        Item(id: "voice", title: "Voice", detail: "Speaks one line in the chosen voice.", result: .untested),
+        Item(id: "lockedMic", title: "Mic while locked", detail: "During a call: lock the phone and talk.", result: .untested),
+        Item(id: "notification", title: "Notification reply", detail: "Sends a notice with Approve, Deny and Reply.", result: .untested),
+        Item(id: "liveActivity", title: "Live Activity buttons", detail: "Starts the Live Activity and waits for a button.", result: .untested),
+        Item(id: "control", title: "Control Center control", detail: "Waits for the Call control to be pressed.", result: .untested),
+        Item(id: "widgetFetch", title: "Widget state", detail: "Checks the store the Lock Screen widget reads.", result: .untested),
+        Item(id: "headMotion", title: "Head nod and shake", detail: "Reads AirPods head motion.", result: .untested),
+        Item(id: "incomingCall", title: "Claude rings you", detail: "Rings the phone with a local call.", result: .untested)
+    ]
+
+    @ObservationIgnored private var backgroundBuffers = 0
+    @ObservationIgnored private var backgroundLoudest = 0.0
+    @ObservationIgnored private var ownsActivity = false
+
+    func run(_ id: String) async {
+        let model = CallModel.shared
+        mark(id, .running)
+        switch id {
+        case "line":
+            guard let line = model.line else {
+                mark(id, .fail("Load your config first."))
+                return
+            }
+            do {
+                try await line.ping()
+                let count = try await line.sessions().count
+                let via = await line.usingFallback ? "the fallback address" : "the main address"
+                mark(id, .pass, detail: "Reached on \(via), certificate name checked, \(count) session(s) live.")
+            } catch {
+                mark(id, .fail(plainSentence(error)))
+            }
+
+        case "speech":
+            let check = await SpeechListener.check()
+            let result: Item.Result = check.ready ? .pass : .fail(check.detail)
+            mark(id, result, detail: check.detail)
+
+        case "voice":
+            if model.voiceID == Speaker.phone {
+                guard let summary = Speaker.phoneVoiceSummary() else {
+                    mark(id, .fail("No English voice is installed."))
+                    return
+                }
+                model.previewVoice(Speaker.phone)
+                mark(id, .pass, detail: summary)
+            } else {
+                guard let line = model.line else {
+                    mark(id, .fail("Load your config first."))
+                    return
+                }
+                do {
+                    let audio = try await line.tts(text: "This is the voice check.", voice: model.voiceID)
+                    model.previewVoice(model.voiceID)
+                    mark(id, .pass, detail: "The PC sent \(max(1, audio.count / 1024)) KB of audio for this voice.")
+                } catch {
+                    mark(id, .fail("The PC did not produce this voice: \(plainSentence(error))"))
+                }
+            }
+
+        case "lockedMic":
+            guard model.isInCall else {
+                mark(id, .fail("Start a call first, then run this and lock the phone."))
+                return
+            }
+            backgroundBuffers = 0
+            backgroundLoudest = 0
+            mark(id, .running, detail: "Lock the phone now and talk for 20 seconds.")
+            try? await Task.sleep(for: .seconds(30))
+            if backgroundBuffers > 20, backgroundLoudest > 0.15 {
+                mark(id, .pass, detail: "\(backgroundBuffers) mic buffers arrived with the app off screen, your voice among them.")
+            } else if backgroundBuffers > 20 {
+                mark(id, .fail("Audio arrived with the app off screen, but only silence."))
+            } else {
+                mark(id, .fail("No audio arrived with the app off screen (or the phone was never locked)."))
+            }
+
+        case "notification":
+            guard await NotificationHub.shared.authorize() else {
+                mark(id, .fail("Notifications are off for Call in Settings."))
+                return
+            }
+            NotificationHub.shared.postProbe()
+            mark(id, .running, detail: "Sent. Pull down on it, press Reply and send a word.")
+            await expire(id)
+
+        case "liveActivity":
+            ownsActivity = !model.isInCall
+            if let refused = model.activity.start(title: "Probe") {
+                mark(id, .fail(refused))
+                return
+            }
+            model.activity.update(state: model.state, line: "Probe: press a button here", ask: nil)
+            guard model.activity.isLive else {
+                mark(id, .fail("The system did not start a Live Activity."))
+                return
+            }
+            mark(id, .running, detail: "It is up. Lock the phone and press a button on it.")
+            await expire(id)
+            if ownsActivity, !model.isInCall { model.activity.end() }
+
+        case "control":
+            ControlCenter.shared.reloadAllControls()
+            mark(id, .running, detail: "Add the Call control to Control Center if it is not there, then press it.")
+            await expire(id)
+
+        case "widgetFetch":
+            guard SharedState.isAvailable else {
+                mark(id, .fail("This signing has no shared container, so the Lock Screen widget cannot read the app's state."))
+                return
+            }
+            let before = SharedState.read()
+            let token = "probe \(Int(Date().timeIntervalSince1970))"
+            SharedState.write(state: before.state, line: token, ask: before.ask)
+            let back = SharedState.read().line
+            SharedState.write(state: before.state, line: before.line, ask: before.ask)
+            if back == token {
+                mark(id, .pass, detail: "The shared store works. The widget reads it; it does not fetch from the PC.")
+            } else {
+                mark(id, .fail("The shared store did not hold what was written."))
+            }
+
+        case "headMotion":
+            guard GestureReader.selfCheck() else {
+                mark(id, .fail("The nod and shake maths failed its own check."))
+                return
+            }
+            guard !model.head.isDenied else {
+                mark(id, .fail("Motion access is off for Call in Settings."))
+                return
+            }
+            guard model.head.isAvailable else {
+                mark(id, .fail("No AirPods with head tracking are connected."))
+                return
+            }
+            model.head.start()
+            mark(id, .running, detail: "Nod twice or shake twice within 20 seconds.")
+            try? await Task.sleep(for: .seconds(20))
+            if isRunning(id) { mark(id, .fail("No nod or shake was seen in 20 seconds.")) }
+            if model.pendingAsk == nil { model.head.stop() }
+
+        case "incomingCall":
+            guard !model.isInCall else {
+                mark(id, .fail("End the call first: the system allows one call at a time."))
+                return
+            }
+            if let refused = await model.callKit.ring(reason: "Probe") {
+                mark(id, .fail("The system refused the ring: \(refused)"))
+                return
+            }
+            mark(id, .running, detail: "Ringing. Answer with a nod or the green button, or decline with a shake.")
+            await expire(id)
+            if isRunning(id) || model.callKit.hasCall { model.callKit.endCall() }
+
+        default:
+            mark(id, .fail("There is no such check."))
+        }
+    }
+
+    // MARK: what the engine reports back
+
+    fileprivate func sawNotification(action: String, text: String?) {
+        guard isRunning("notification") else { return }
+        switch action {
+        case NotificationHub.replyID: mark("notification", .pass, detail: "Reply reached the app with: \(text ?? "")")
+        case NotificationHub.approveID: mark("notification", .pass, detail: "Approve reached the app. Try Reply too.")
+        case NotificationHub.denyID: mark("notification", .pass, detail: "Deny reached the app. Try Reply too.")
+        default: mark("notification", .fail("The notice was opened, but no action was pressed."))
+        }
+    }
+
+    /// A Live Activity button or a control ran its intent inside the app.
+    fileprivate func sawIntent() {
+        for id in ["liveActivity", "control"] where isRunning(id) {
+            mark(id, .pass, detail: "The press reached the app.")
+        }
+    }
+
+    /// True when the probe was waiting for it, so the gesture answers nothing real.
+    fileprivate func sawHead(_ gesture: HeadGesture) -> Bool {
+        guard isRunning("headMotion") else { return false }
+        mark("headMotion", .pass, detail: gesture == .nod ? "A nod was read." : "A shake was read.")
+        return true
+    }
+
+    /// True when the ring was the probe's own.
+    fileprivate func sawRing(answered: Bool) -> Bool {
+        guard isRunning("incomingCall") else { return false }
+        mark("incomingCall", .pass, detail: answered ? "The ring was answered." : "The ring was declined.")
+        return true
+    }
+
+    fileprivate func micHeard(_ level: Double, inBackground: Bool) {
+        guard inBackground, isRunning("lockedMic") else { return }
+        backgroundBuffers += 1
+        backgroundLoudest = max(backgroundLoudest, level)
+    }
+
+    // MARK: helpers
+
+    private func expire(_ id: String) async {
+        try? await Task.sleep(for: .seconds(60))
+        if isRunning(id) { mark(id, .fail("Nothing came back within a minute.")) }
+    }
+
+    private func isRunning(_ id: String) -> Bool {
+        guard let item = items.first(where: { $0.id == id }) else { return false }
+        if case .running = item.result { return true }
+        return false
+    }
+
+    private func mark(_ id: String, _ result: Item.Result, detail: String? = nil) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].result = result
+        if let detail { items[index].detail = detail }
+    }
+}

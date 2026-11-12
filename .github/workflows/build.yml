@@ -1,9 +1,14 @@
 name: build
 
-# Started by hand only. Builds an unsigned .ipa, publishes it as a release together with the
-# SideStore source file; SideStore signs the app on the phone.
+# Started by hand only. Builds an unsigned .ipa (the app with its widget extension inside), publishes it
+# as a release together with the SideStore source file; SideStore signs the app on the phone.
 on:
   workflow_dispatch:
+    inputs:
+      app_group:
+        description: "Mark the App Group in the build (lets the Lock Screen widget read the call state). Turn off if the install fails."
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -12,6 +17,8 @@ jobs:
   ios:
     runs-on: xcode-27
     timeout-minutes: 30
+    env:
+      APP: build/Release-iphoneos/PLCall.app
     steps:
       - uses: actions/checkout@v4
 
@@ -22,10 +29,16 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          swift --version
 
+      - name: Check the project file
+        run: python3 scripts/check_pbxproj.py
+
+      # Building the PLCall target also builds the widget extension and embeds it.
+      # On failure the errors are printed here, so `gh run view --log-failed` shows them without the noise.
       - name: Build (unsigned)
         run: |
-          xcodebuild \
+          if ! xcodebuild \
             -project PLCall.xcodeproj \
             -target PLCall \
             -configuration Release \
@@ -35,19 +48,57 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build > xcodebuild.log 2>&1; then
+            echo "===== BUILD FAILED: every error in the log, once each ====="
+            grep -E "error:|warning: unre|BUILD FAILED" xcodebuild.log | awk '!seen[$0]++' | head -150
+            echo "===== the last 200 lines, errors only ====="
+            tail -n 200 xcodebuild.log | grep -E "error:|warning: unre|BUILD FAILED" | head -150
+            exit 1
+          fi
+          tail -n 5 xcodebuild.log
+          echo "warnings: $(grep -c "warning:" xcodebuild.log || true)"
+
+      - name: Keep the full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Check the extension is inside the app
+        run: |
+          test -d "$APP/PlugIns/PLCallWidgets.appex" || { echo "MISSING: $APP/PlugIns/PLCallWidgets.appex"; ls -R "$APP" | head -60; exit 1; }
+          ls "$APP/PlugIns/PLCallWidgets.appex"
+          /usr/libexec/PlistBuddy -c "Print :NSExtension:NSExtensionPointIdentifier" "$APP/PlugIns/PLCallWidgets.appex/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/PlugIns/PLCallWidgets.appex/Info.plist"
+
+      # An unsigned build carries no entitlements, so the App Group is written in with an ad hoc signature
+      # (no identity, nothing private). SideStore replaces the signature and keeps the group.
+      # If this step cannot sign, the build still ships: the app works without the shared state.
+      - name: Mark the App Group
+        if: ${{ inputs.app_group }}
+        run: |
+          if codesign --force --sign - --entitlements scripts/PLCallWidgets.entitlements "$APP/PlugIns/PLCallWidgets.appex" \
+            && codesign --force --sign - --entitlements scripts/PLCall.entitlements "$APP"; then
+            codesign -d --entitlements - --xml "$APP" 2>/dev/null | head -c 800; echo
+          else
+            echo "::warning::The App Group could not be marked. The app ships without shared state for the Lock Screen widget."
+          fi
 
       - name: Package .ipa
         run: |
           mkdir -p Payload
-          cp -R build/Release-iphoneos/PLCall.app Payload/
+          cp -R "$APP" Payload/
           zip -qr PLCall.ipa Payload
           ls -l PLCall.ipa
 
       - name: Write the SideStore source
         run: |
           python3 scripts/make_source.py \
-            --app build/Release-iphoneos/PLCall.app \
+            --app "$APP" \
             --ipa PLCall.ipa \
             --repo "${{ github.repository }}" \
             --tag "build-${{ github.run_number }}" \
