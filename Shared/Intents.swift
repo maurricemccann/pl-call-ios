@@ -89,7 +89,8 @@ struct TalkIntent: LiveActivityIntent {
 }
 
 /// Starts the microphone from a control or a shortcut. The app must start its Live Activity in the same step, or the system stops the recording.
-struct StartCallIntent: AudioRecordingIntent {
+/// LiveActivityIntent too: only that lets a Live Activity start from the background, and it runs the intent in the app's process.
+struct StartCallIntent: AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Start a Call"
     static let supportedModes: IntentModes = .background
 

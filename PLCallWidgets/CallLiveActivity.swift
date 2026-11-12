@@ -126,8 +126,11 @@ struct DetailLine: View {
     let content: CallActivityAttributes.ContentState
     let lines: Int
 
+    /// A question carries text but no askID (no buttons can answer it here), so the text alone marks an ask.
+    private var isAsking: Bool { content.askID != nil || content.askText != nil }
+
     private var words: String {
-        if content.askID != nil {
+        if isAsking {
             return content.askText ?? "Waiting for your answer."
         }
         return content.line
@@ -136,7 +139,7 @@ struct DetailLine: View {
     var body: some View {
         Text(words)
             .font(WidgetStyle.text(14, .footnote))
-            .foregroundStyle(content.askID != nil ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.secondary)
+            .foregroundStyle(isAsking ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.secondary)
             .lineLimit(lines)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

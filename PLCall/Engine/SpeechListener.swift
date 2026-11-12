@@ -46,7 +46,10 @@ final class MicTap: @unchecked Sendable {
         self.onInput = onInput
         self.onLevel = onLevel
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
+        // enabling it again can post a configuration change, which would restart the mic in a loop
+        if !input.isVoiceProcessingEnabled { try input.setVoiceProcessingEnabled(true) }
+        // gives the voice-processing I/O unit an output path in the graph
+        _ = engine.mainMixerNode
         // Voice processing ducks other audio by default, which would quieten Claude's own voice.
         input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
             enableAdvancedDucking: false, duckingLevel: .min)
@@ -83,6 +86,8 @@ final class MicTap: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         if engine.isRunning { engine.stop() }
     }
+
+    var isRunning: Bool { engine.isRunning }
 
     func forget() {
         stop()
@@ -210,10 +215,10 @@ actor SpeechListener {
                 for try await result in transcriber.results {
                     await self?.took(String(result.text.characters), isFinal: result.isFinal, start: result.range.start)
                 }
-            } catch is CancellationError {
-                return
             } catch {
-                await self?.report("Speech recognition stopped: \(error.localizedDescription)")
+                // a stop cancels this task; anything else (a CancellationError included) means the analyzer finished on an error
+                if Task.isCancelled { return }
+                await self?.failed("Speech recognition stopped: \(error.localizedDescription)")
             }
         }
         let out = self.out
@@ -236,8 +241,10 @@ actor SpeechListener {
         volatile = ""
     }
 
-    func restartMic() {
+    /// `onlyIfStopped`: an engine configuration change stops the engine; one that left it running needs nothing.
+    func restartMic(onlyIfStopped: Bool = false) {
         guard analyzer != nil else { return }
+        if onlyIfStopped, mic.isRunning { return }
         do { try mic.restart() } catch { report("The microphone did not come back: \(Self.words(error))") }
     }
 
@@ -286,6 +293,23 @@ actor SpeechListener {
 
     private func report(_ message: String) {
         out.yield(.failed(message))
+    }
+
+    /// After an error the analyzer is finished for good: drop it and the mic, so the next `start` builds both fresh.
+    private func failed(_ message: String) async {
+        pauseTask?.cancel()
+        pauseTask = nil
+        mic.forget()
+        input?.finish()
+        input = nil
+        resultsTask = nil
+        if let dead = analyzer {
+            analyzer = nil
+            await dead.cancelAndFinishNow()
+        }
+        finalized = ""
+        volatile = ""
+        report(message)
     }
 
     private static func join(_ a: String, _ b: String) -> String {

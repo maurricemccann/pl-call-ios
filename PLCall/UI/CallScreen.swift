@@ -30,7 +30,7 @@ struct CallScreen: View {
                 .safeAreaInset(edge: .top, spacing: 0) { topBar }
                 .safeAreaInset(edge: .bottom, spacing: 0) { bottomArea }
             if showsEdgeLight {
-                EdgeLight(level: model.micLevel)
+                MicEdgeLight(model: model)
                     .transition(.opacity)
             }
         }
@@ -354,8 +354,14 @@ struct CallScreen: View {
                 .frame(width: 56, height: 56)
                 .contentShape(Circle())
         }
-        .glassControl(tint: model.isInCall ? T.end : T.call, in: Circle())
+        .glassControl(tint: callTint, in: Circle())
         .accessibilityLabel(model.isInCall ? "End call" : "Call")
+    }
+
+    /// One tinted control at a time: while a permission waits, Approve carries the tint and End goes plain.
+    private var callTint: Color? {
+        if model.isInCall { return pendingPermission == nil ? T.end : nil }
+        return T.call
     }
 
     // MARK: Sheets
@@ -379,5 +385,14 @@ struct CallScreen: View {
                 .presentationDragIndicator(.visible)
             }
         }
+    }
+}
+
+/// The Edge Light reads the mic level itself, so the dozen level changes a second redraw only the glow, not the call screen.
+private struct MicEdgeLight: View {
+    let model: CallModel
+
+    var body: some View {
+        EdgeLight(level: model.micLevel)
     }
 }

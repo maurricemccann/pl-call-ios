@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 import UIKit
@@ -35,6 +36,7 @@ struct Turn: Identifiable, Equatable {
     var isClaudeTyping = false
     var sessionTitle: String?
     var lastError: String?
+    var restoring = true                 // the saved config is still being read back at launch
     let probe = ProbeModel()
 
     // MARK: the parts
@@ -59,6 +61,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var awaitingReply = false    // something was sent and Claude's turn has not ended
     @ObservationIgnored private var heldReply: String?       // an answer that arrived while he was mid-sentence
     @ObservationIgnored private var ownsAudio = false        // the session was activated here, not by CallKit
+    @ObservationIgnored private var earsRetried = false      // the ears are rebuilt once per call after a speech error
 
     private enum Say {
         static let load = "Load your config"
@@ -100,6 +103,8 @@ struct Turn: Identifiable, Equatable {
             apply(loaded)
         } catch let problem as PLCallConfig.Problem {
             configError = problem.description
+        } catch let failure as Keychain.Failure {
+            configError = "The config was read, but this iPhone would not store it (Keychain error \(failure.status))."
         } catch {
             configError = "That file could not be read."
         }
@@ -125,6 +130,7 @@ struct Turn: Identifiable, Equatable {
 
     private func restore() async {
         if let saved = await store.saved() { apply(saved) }
+        restoring = false
     }
 
     private func apply(_ config: PLCallConfig) {
@@ -169,14 +175,19 @@ struct Turn: Identifiable, Equatable {
         lastError = nil
         activity.start(title: Say.title)   // in the same step as the mic: a call started from a control stops recording without it
         set(.connecting, Say.connecting)
+        // A first-time prompt cannot show from the background (a control on the lock screen): the call would wait on it.
+        if AVAudioApplication.shared.recordPermission == .undetermined, UIApplication.shared.applicationState != .active {
+            finishCall("Open Call once to allow the microphone.")
+            return
+        }
         Task {
             guard await AudioSessionManager.micAllowed() else {
                 self.finishCall("Allow the microphone for Call in Settings.")
                 return
             }
-            _ = await NotificationHub.shared.authorize()
             guard self.isInCall else { return }
             self.callKit.startCall()
+            _ = await NotificationHub.shared.authorize()   // after the call is up, so a pending prompt never holds the call back
         }
     }
 
@@ -358,13 +369,22 @@ struct Turn: Identifiable, Equatable {
         callKit.onMuteToggled = { [weak self] in self?.talk() }
         IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
         IntentBridge.deny = { [weak self] message in self?.answerPermission(allow: false, message: message) }
-        IntentBridge.endCall = { [weak self] in self?.endCall() }
+        IntentBridge.endCall = { [weak self] in
+            self?.probe.sawIntent()
+            self?.endCall()
+        }
         IntentBridge.startCall = { [weak self] in
             self?.probe.sawIntent()
             self?.startFromIntent()
         }
-        IntentBridge.replay = { [weak self] in self?.replay() }
-        IntentBridge.talk = { [weak self] in self?.talk() }
+        IntentBridge.replay = { [weak self] in
+            self?.probe.sawIntent()
+            self?.replay()
+        }
+        IntentBridge.talk = { [weak self] in
+            self?.probe.sawIntent()
+            self?.talk()
+        }
         NotificationHub.shared.register()
         AudioSessionManager.observe { change in
             Task { @MainActor in CallModel.shared.audioChanged(change) }
@@ -384,9 +404,14 @@ struct Turn: Identifiable, Equatable {
             guard let session = try await line.sessions().first else { throw LineClient.Failure.noSession }
             let backlog = try await line.events(sid: session.id, limit: 60)
             guard generation == lineGeneration else { return }
+            if sid == session.id, reducer.lastSeq > 0 {
+                // the same session after a drop: take what was missed (a turn end, a permission) instead of skipping it
+                for event in backlog where event.sequenceNum > reducer.lastSeq { took(event) }
+            } else {
+                reducer.prime(backlog)
+            }
             sid = session.id
             sessionTitle = session.title ?? session.id
-            reducer.prime(backlog)
             lineIsUp(true)
             let stream = line.stream(sid: session.id, fromSeq: reducer.lastSeq) { up in
                 Task { @MainActor in CallModel.shared.lineIsUp(up, generation: generation) }
@@ -499,6 +524,13 @@ struct Turn: Identifiable, Equatable {
     // MARK: asks
 
     private func raise(_ ask: Ask) {
+        if let earlier = pendingAsk, earlier != ask {
+            // a second ask replaces the first: the first one's notification must not stay answerable
+            switch earlier {
+            case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
+            case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
+            }
+        }
         pendingAsk = ask
         switch ask {
         case .permission(let requestID, let toolUseID, let forWhat, let what):
@@ -592,12 +624,32 @@ struct Turn: Identifiable, Equatable {
             if state != .hearing { set(.hearing, Say.hearing) }
             statusLine = "Hearing: \(text)"
         case .turn(let text):
-            guard !speaker.isSpeaking else { return }
-            took(text)
+            guard speaker.isSpeaking else {
+                took(text)
+                return
+            }
+            guard let answer = permissionAnswer(text) else { return }
+            speaker.stop()   // a clear approve or deny said over the prompt counts, and the voice stops
+            took(answer)
         case .failed(let message):
             lastError = message
             set(.lost, message)
+            if !earsRetried {
+                earsRetried = true
+                audioActivated()   // the listener dropped its finished analyzer, so this builds the ears again, once per call
+            }
         }
+    }
+
+    /// His words minus the words the voice is saying, when a permission waits and they are a clear yes or no; else nil.
+    /// The prompt itself says "approve or deny", so its echo can never answer. Questions are not taken over the voice:
+    /// the spoken "Option 2" can come back from the mic as "two".
+    private func permissionAnswer(_ heard: String) -> String? {
+        guard let ask = pendingAsk, case .permission = ask else { return nil }
+        let spoken = Set(speaker.speakingText.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
+        let own = heard.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init).filter { !spoken.contains($0) }
+        let words = own.joined(separator: " ")
+        return SpokenAnswer.decision(words) != nil ? words : nil
     }
 
     /// Echo cancellation is not proven on this path, so the voice's own words coming back through the mic are not a barge-in:
@@ -715,11 +767,12 @@ struct Turn: Identifiable, Equatable {
                 if self.isInCall, self.state == .lost { self.rest() }
             }
         case .routeChanged, .engineReset:
+            let onlyIfStopped = change == .engineReset   // a configuration change that left the engine running needs nothing
             routeTask?.cancel()
             routeTask = Task {
                 try? await Task.sleep(for: .milliseconds(400))   // several notices arrive for one AirPods change
                 guard !Task.isCancelled else { return }
-                await listener.restartMic()
+                await listener.restartMic(onlyIfStopped: onlyIfStopped)
             }
         }
     }
@@ -743,6 +796,7 @@ struct Turn: Identifiable, Equatable {
         guard isInCall else { return }
         isInCall = false
         armed = false
+        earsRetried = false
         armedReply = nil
         heldReply = nil
         micLevel = 0
@@ -919,7 +973,7 @@ struct Turn: Identifiable, Equatable {
                 mark(id, .fail("The system did not start a Live Activity."))
                 return
             }
-            mark(id, .running, detail: "It is up. Lock the phone and press a button on it.")
+            mark(id, .running, detail: "It is up. Lock the phone and press End on it (during a call that ends the call).")
             await expire(id)
             if ownsActivity, !model.isInCall { model.activity.end() }
 

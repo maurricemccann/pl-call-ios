@@ -8,6 +8,8 @@ struct RootView: View {
     let model: CallModel
     @State private var unlocked = false
     @State private var checking = false
+    @State private var askedThisVisit = false
+    @Environment(\.scenePhase) private var scenePhase
 
     // explicit: a view with private state must not depend on the synthesized initializer staying internal
     init(model: CallModel) { self.model = model }
@@ -15,7 +17,10 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Backdrop()
-            if !model.hasConfig {
+            if model.restoring {
+                // the saved config is still being read back: show nothing rather than a "Load your config" flash
+                Color.clear
+            } else if !model.hasConfig {
                 ConfigGateView(model: model)
             } else if unlocked {
                 CallScreen(model: model)
@@ -24,8 +29,21 @@ struct RootView: View {
             }
         }
         .task(id: model.hasConfig) {
-            if model.hasConfig && !unlocked { await unlock() }
+            await unlockIfDue()
         }
+        .onChange(of: scenePhase) { _, phase in
+            // a launch in the background (a notification action, a control) cannot show Face ID: ask when he opens the app.
+            // Face ID's own sheet only makes the scene inactive, so a cancel does not bring the prompt straight back.
+            if phase == .background { askedThisVisit = false }
+            if phase == .active { Task { await unlockIfDue() } }
+        }
+    }
+
+    /// One automatic ask per visit to the foreground; Retry asks again by hand.
+    private func unlockIfDue() async {
+        guard model.hasConfig, !unlocked, !askedThisVisit, scenePhase == .active else { return }
+        askedThisVisit = true
+        await unlock()
     }
 
     private var lockedView: some View {

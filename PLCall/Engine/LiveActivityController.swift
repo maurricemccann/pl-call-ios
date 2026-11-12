@@ -5,9 +5,13 @@ import Foundation
 /// It can only START in the foreground or inside a Live Activity / audio recording intent; updates and the end work anywhere.
 @MainActor final class LiveActivityController {
     private var chain: Task<Void, Never>?   // one update after another, so a late one never overwrites a newer one
+    private var stale: Set<String> = []     // left over from a process that died; captured at launch, never reused
 
     var isAllowed: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
-    var isLive: Bool { !Activity<CallActivityAttributes>.activities.isEmpty }
+    var isLive: Bool {
+        let stale = self.stale
+        return Activity<CallActivityAttributes>.activities.contains { !stale.contains($0.id) }
+    }
 
     /// Returns nil when it started (or one is already up), else why not.
     @discardableResult func start(title: String) -> String? {
@@ -33,8 +37,8 @@ import Foundation
         case .permission(let requestID, _, let forWhat, _)?:
             askID = requestID
             askText = String(forWhat.prefix(240))
-        case .question(let requestID, _, let question, _)?:
-            askID = requestID
+        case .question(_, _, let question, _)?:
+            // no askID: the Lock Screen buttons answer permissions only, so a question shows its text and is answered in the app or aloud
             askText = String(question.question.prefix(240))
         case nil:
             break
@@ -50,9 +54,13 @@ import Foundation
         enqueue { await ActivityPush.endAll() }
     }
 
-    /// At launch: an activity left over from a call that died with the app.
+    /// At launch: an activity left over from a call that died with the app. The ids are taken now, so an activity
+    /// an intent starts a moment later is never ended by this.
     func endStale() {
-        end()
+        let ids = Set(Activity<CallActivityAttributes>.activities.map(\.id))
+        guard !ids.isEmpty else { return }
+        stale = ids
+        enqueue { await ActivityPush.end(ids: ids) }
     }
 
     private func enqueue(_ work: @escaping @Sendable () async -> Void) {
@@ -82,6 +90,12 @@ enum ActivityPush {
 
     static func endAll() async {
         for activity in Activity<CallActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    static func end(ids: Set<String>) async {
+        for activity in Activity<CallActivityAttributes>.activities where ids.contains(activity.id) {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
     }

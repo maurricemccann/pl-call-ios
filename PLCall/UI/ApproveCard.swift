@@ -23,8 +23,10 @@ struct ApproveCard: View {
             content
             ScrollView { content }   // at the largest text sizes the card scrolls instead of cutting its words
         }
+        .frame(maxHeight: 420)   // the bottom inset barely limits height: this cap is what makes the scrolling form win at AX5
         .padding(T.margin)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: T.cardRadius, style: .continuous))
+        // content, not a control: a plain plate (HIG), the glass stays on its buttons
+        .background(T.plate, in: RoundedRectangle(cornerRadius: T.cardRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Claude asks for permission")
     }
