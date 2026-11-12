@@ -1,0 +1,22 @@
+name: logic
+
+# The plain logic (PLCallCore) compiles and its tests run on Linux on every push: about a minute, no Mac.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift
+        run: swift --version
+      - name: Test
+        run: swift test --package-path PLCallCore
+      - name: Hygiene scan
+        run: bash scripts/scan.sh
