@@ -40,7 +40,7 @@ def main() -> None:
         "subtitle": "A native iPhone app",
         "description": "Builds of the Call app.",
         "iconURL": f"https://raw.githubusercontent.com/{a.repo}/main/assets/icon.png",
-        "tintColor": "#0A84FF",
+        "tintColor": "#E8641E",
         "apps": [
             {
                 "name": info.get("CFBundleDisplayName", "Call"),
@@ -49,7 +49,7 @@ def main() -> None:
                 "subtitle": "Hands-free voice call",
                 "localizedDescription": "A native iPhone app, built from SwiftUI.",
                 "iconURL": f"https://raw.githubusercontent.com/{a.repo}/main/assets/icon.png",
-                "tintColor": "#0A84FF",
+                "tintColor": "#E8641E",
                 "category": "utilities",
                 "versions": [version],
                 "appPermissions": {"entitlements": [], "privacy": privacy},
