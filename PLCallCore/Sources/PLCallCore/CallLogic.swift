@@ -73,11 +73,13 @@ public enum SpokenAnswer {
 
     public static func option(_ heard: String, of q: PermissionRequest.Question) -> Int? {
         let t = heard.lowercased()
+        // an option's own name wins over a number word ("the blue one" is Blue, not option one)
+        if let named = q.options.firstIndex(where: { t.contains($0.lowercased()) }) { return named }
         let words = ["one", "two", "three", "four"]
         for i in q.options.indices where i < words.count {
             if t.range(of: "\\b\(words[i])\\b", options: .regularExpression) != nil || t.range(of: "\\b\(i + 1)\\b", options: .regularExpression) != nil { return i }
         }
-        return q.options.firstIndex { t.contains($0.lowercased()) }
+        return nil
     }
 }
 
