@@ -447,6 +447,23 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    /// The AirPods press, as the system's mute. In AUTO it mutes; in PUSH it is push-to-talk: the system's mute is
+    /// undone at once (so the mic stays live) and the press takes a turn (his ask 11-12: push to talk from the AirPods).
+    private func systemMuteChanged(_ muted: Bool) {
+        guard isInCall else { return }
+        if handsFree {
+            setMuted(muted, fromSystem: true)
+            return
+        }
+        if muted { try? AVAudioApplication.shared.setInputMuted(false) }
+        if Date().timeIntervalSince(lastPushPress) > 0.6 {   // the CallKit mute action and this notice can both arrive for one press
+            lastPushPress = Date()
+            talk()
+        }
+    }
+
+    @ObservationIgnored private var lastPushPress = Date.distantPast
+
     /// Mutes his mic like a phone call: nothing he says is sent, and if he talks while muted the call tells him once.
     func setMuted(_ on: Bool, fromSystem: Bool = false) {
         guard isInCall, on != isMuted else { return }
@@ -798,11 +815,16 @@ struct Turn: Identifiable, Equatable {
         // the AirPods press arrives as mute: in PUSH it takes a turn, in AUTO it mutes and unmutes like a phone call
         callKit.onMuteToggled = { [weak self] in
             guard let self else { return }
-            if self.handsFree { self.setMuted(!self.isMuted) } else { self.talk() }
+            if self.handsFree {
+                self.setMuted(!self.isMuted)
+            } else if Date().timeIntervalSince(self.lastPushPress) > 0.6 {
+                self.lastPushPress = Date()
+                self.talk()
+            }
         }
         _ = NotificationCenter.default.addObserver(forName: AVAudioApplication.inputMuteStateChangeNotification, object: nil, queue: .main) { note in
             let muted = (note.userInfo?[AVAudioApplication.muteStateKey] as? NSNumber)?.boolValue ?? false
-            Task { @MainActor in CallModel.shared.setMuted(muted, fromSystem: true) }
+            Task { @MainActor in CallModel.shared.systemMuteChanged(muted) }
         }
         callKit.onHeld = { [weak self] held in self?.heldByOtherCall(held) }
         IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
