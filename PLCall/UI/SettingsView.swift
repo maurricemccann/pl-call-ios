@@ -53,6 +53,25 @@ struct SettingsView: View {
         Binding(get: { model.musicMode }, set: { model.setMusicMode($0) })
     }
 
+    private func sessionRow(_ id: String?, title: String) -> some View {
+        Button {
+            model.chooseSession(id)
+        } label: {
+            HStack {
+                Text(title)
+                    .plFont(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Spacer(minLength: T.gap)
+                if model.chosenSession == id {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(T.orange)
+                        .accessibilityLabel("Chosen")
+                }
+            }
+        }
+    }
+
     private func toggleRow(_ title: String, _ detail: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
             VStack(alignment: .leading, spacing: 2) {
@@ -106,6 +125,19 @@ struct SettingsView: View {
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
                     toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
+                }
+
+                Section {
+                    sessionRow(nil, title: "The newest live session")
+                    ForEach(model.sessions) { session in
+                        sessionRow(session.id, title: session.title)
+                    }
+                } header: {
+                    Text("Which session to call")
+                        .plFont(.footnote)
+                } footer: {
+                    Text("Running more than one Claude Code session on the PC? Pick the one Call talks to. Pull down to refresh.")
+                        .plFont(.footnote)
                 }
 
                 Section {
@@ -201,6 +233,8 @@ struct SettingsView: View {
                         .plFont(.footnote)
                 }
             }
+            .refreshable { await model.refreshSessions() }
+            .task { await model.refreshSessions() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { title("Settings") }

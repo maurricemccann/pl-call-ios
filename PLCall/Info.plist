@@ -15,6 +15,11 @@
 	<string>Call reads a nod or a shake of your head from your AirPods, so you can answer without your hands.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Call asks for Face ID when it opens, because it controls a live session.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+		<string>INStartAudioCallIntent</string>
+	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIAppFonts</key>

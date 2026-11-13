@@ -1,5 +1,6 @@
 import AVFoundation
 import CallKit
+import UIKit
 
 /// The call as the system sees it: an outgoing CallKit call keeps the mic alive behind the lock screen,
 /// and a local incoming call is how "Claude rings you". No PushKit anywhere.
@@ -37,6 +38,8 @@ import CallKit
         setup.maximumCallGroups = 1
         setup.maximumCallsPerCallGroup = 1
         setup.includesCallsInRecents = true
+        // the system call screen's button back to the app: only the alpha is used, as a white mask
+        setup.iconTemplateImageData = UIImage(named: "CallKitIcon")?.pngData()
         provider = CXProvider(configuration: setup)
         super.init()
         provider.setDelegate(self, queue: .main)

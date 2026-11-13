@@ -12,6 +12,9 @@ struct PLCallApp: App {
             RootView(model: CallModel.shared)
                 .tint(T.orange)
                 .preferredColorScheme(.dark)   // matches the R1 Call
+                // tapping Claude in the Phone app's Recents opens Call with a start-call activity: call back
+                .onContinueUserActivity("INStartCallIntent") { _ in CallModel.shared.startCall() }
+                .onContinueUserActivity("INStartAudioCallIntent") { _ in CallModel.shared.startCall() }
         }
     }
 }

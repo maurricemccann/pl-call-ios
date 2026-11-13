@@ -4,6 +4,11 @@ import Observation
 import UIKit
 import WidgetKit
 
+struct SessionChoice: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+}
+
 struct Turn: Identifiable, Equatable {
     let id: UUID
     var who: Who
@@ -41,6 +46,8 @@ struct Turn: Identifiable, Equatable {
     var micLevel: Double = 0
     var isClaudeTyping = false
     var sessionTitle: String?
+    var sessions: [SessionChoice] = []   // the live sessions on the PC, for the picker
+    var chosenSession: String?           // nil = the newest live session
     var lastError: String?
     var restoring = true                 // the saved config is still being read back at launch
     let probe = ProbeModel()
@@ -102,6 +109,7 @@ struct Turn: Identifiable, Equatable {
         static let music = "plcall.musicMode"
         static let progress = "plcall.speakProgress"
         static let wake = "plcall.wakeWord"
+        static let session = "plcall.session"
         static let reach = "plcall.stayReachable"
         static let idle = "plcall.idleRingMinutes"
         static let short = "plcall.shortAnswers"
@@ -114,6 +122,7 @@ struct Turn: Identifiable, Equatable {
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
         wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
         stayReachable = UserDefaults.standard.object(forKey: Keys.reach) as? Bool ?? true
+        chosenSession = UserDefaults.standard.string(forKey: Keys.session)
         shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? true
         wire()
         let center = NotificationCenter.default
@@ -375,6 +384,27 @@ struct Turn: Identifiable, Equatable {
         UserDefaults.standard.set(on, forKey: Keys.cues)
     }
 
+    /// Asks the PC for the live sessions again (the picker's pull to refresh).
+    func refreshSessions() async {
+        guard let line else { return }
+        if let live = try? await line.sessions() {
+            sessions = live.map { SessionChoice(id: $0.id, title: $0.title ?? $0.id) }
+        }
+    }
+
+    /// nil = always the newest. Switching drops the line and connects to the new one; a call in progress keeps going on it.
+    func chooseSession(_ id: String?) {
+        guard id != chosenSession else { return }
+        chosenSession = id
+        UserDefaults.standard.set(id, forKey: Keys.session)
+        if let ask = pendingAsk { resolve(ask) }
+        awaitingReply = false
+        isClaudeTyping = false
+        dropLine()
+        connect()
+        if isInCall, spokenCues { speaker.cue("Switched session") }
+    }
+
     func setStayReachable(_ on: Bool) {
         stayReachable = on
         UserDefaults.standard.set(on, forKey: Keys.reach)
@@ -607,7 +637,10 @@ struct Turn: Identifiable, Equatable {
 
     private func runLine(_ line: LineClient, generation: Int) async {
         do {
-            guard let session = try await line.sessions().first else { throw LineClient.Failure.noSession }
+            let live = try await line.sessions()
+            sessions = live.map { SessionChoice(id: $0.id, title: $0.title ?? $0.id) }
+            // the chosen session when it is live, else the newest; a chosen one that ended falls back without forgetting the choice
+            guard let session = live.first(where: { $0.id == chosenSession }) ?? live.first else { throw LineClient.Failure.noSession }
             let backlog = try await line.events(sid: session.id, limit: 60)
             guard generation == lineGeneration else { return }
             if sid == session.id, reducer.lastSeq > 0 {
