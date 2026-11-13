@@ -27,6 +27,8 @@ struct Turn: Identifiable, Equatable {
     var handsFree = true
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
+    var speakProgress = true             // short lines Claude writes while it works are spoken too
+    var shortAnswers = true              // a long answer is said as a few sentences (on-device model), the full text stays on screen
     var voices: [PLCallConfig.Voice] = []
     var voiceID = Speaker.phone
     var quickReplies: [PLCallConfig.QuickReply] = []
@@ -64,6 +66,8 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var heldReply: String?       // an answer that arrived while he was mid-sentence
     @ObservationIgnored private var ownsAudio = false        // the session was activated here, not by CallKit
     @ObservationIgnored private var earsRetried = false      // the ears are rebuilt once per call after a speech error
+    @ObservationIgnored private var interimTask: Task<Void, Never>?
+    @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
 
     private enum Say {
         static let load = "Load your config"
@@ -86,12 +90,16 @@ struct Turn: Identifiable, Equatable {
         static let systemFont = "plcall.usesSystemFont"
         static let cues = "plcall.spokenCues"
         static let music = "plcall.musicMode"
+        static let progress = "plcall.speakProgress"
+        static let short = "plcall.shortAnswers"
     }
 
     private init() {
         handsFree = UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool ?? true
         spokenCues = UserDefaults.standard.object(forKey: Keys.cues) as? Bool ?? true
         musicMode = UserDefaults.standard.bool(forKey: Keys.music)
+        speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
+        shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? true
         wire()
         activity.endStale()
         loading = Task { await self.restore() }
@@ -330,6 +338,16 @@ struct Turn: Identifiable, Equatable {
         UserDefaults.standard.set(on, forKey: Keys.cues)
     }
 
+    func setSpeakProgress(_ on: Bool) {
+        speakProgress = on
+        UserDefaults.standard.set(on, forKey: Keys.progress)
+    }
+
+    func setShortAnswers(_ on: Bool) {
+        shortAnswers = on
+        UserDefaults.standard.set(on, forKey: Keys.short)
+    }
+
     /// Takes effect at the next call.
     func setMusicMode(_ on: Bool) {
         musicMode = on
@@ -483,13 +501,36 @@ struct Turn: Identifiable, Equatable {
             resolve(ask)
             rest()
         }
+        if outputs.isEmpty, speakProgress, isInCall, awaitingReply, event.role == "assistant",
+           let words = event.text?.trimmingCharacters(in: .whitespacesAndNewlines), !words.isEmpty {
+            // A line written while the work goes on. The last line of a turn is followed at once by the turn end,
+            // so only a line still standing after 2.5 seconds is progress.
+            interimTask?.cancel()
+            interimTask = Task {
+                try? await Task.sleep(for: .seconds(2.5))
+                guard !Task.isCancelled, self.isInCall, self.awaitingReply, self.pendingAsk == nil,
+                      !self.speaker.isSpeaking, self.state != .hearing else { return }
+                self.interimSpoken = words
+                self.append(.claude, words)
+                self.set(.speaking, Say.speaking)
+                let brief = SpokenText.make(words).sentences.prefix(2).joined(separator: " ")
+                self.speaker.speak(brief, voiceID: self.voiceID, line: self.line)
+            }
+        }
         for output in outputs {
             switch output {
             case .transcript(let text):
-                append(.claude, text)
+                if text.trimmingCharacters(in: .whitespacesAndNewlines) != interimSpoken { append(.claude, text) }
             case .speak(let text):
+                interimTask?.cancel()
                 awaitingReply = false
                 isClaudeTyping = false
+                if text.trimmingCharacters(in: .whitespacesAndNewlines) == interimSpoken {
+                    interimSpoken = ""
+                    if !speaker.isSpeaking { rest() }   // it was already said as a progress line
+                    continue
+                }
+                interimSpoken = ""
                 if state == .hearing { heldReply = text } else { say(text) }   // never talk over him mid-sentence
             case .ask(let ask):
                 awaitingReply = false
@@ -721,7 +762,18 @@ struct Turn: Identifiable, Equatable {
             rest()
             return
         }
-        voice(text, tone: spokenCues)
+        let written = SpokenText.make(text).sentences.joined(separator: " ")
+        guard shortAnswers, written.count > 450, OnDeviceJudge.isAvailable else {
+            voice(text, tone: spokenCues)
+            return
+        }
+        Task {
+            // a long answer: said as a few sentences, with the full text on the screen
+            let short = await OnDeviceJudge.spoken(written)
+            guard self.isInCall else { return }
+            let words = short.map { $0 + " " + SpokenText.restOnScreen } ?? text
+            if self.state == .hearing { self.heldReply = words } else { self.voice(words, tone: self.spokenCues) }
+        }
     }
 
     private func voice(_ text: String, voiceID id: String? = nil, tone: Bool = false) {
@@ -859,6 +911,8 @@ struct Turn: Identifiable, Equatable {
         earsRetried = false
         armedReply = nil
         heldReply = nil
+        interimTask?.cancel()
+        interimSpoken = ""
         micLevel = 0
         speaker.stop()
         remote.disable()

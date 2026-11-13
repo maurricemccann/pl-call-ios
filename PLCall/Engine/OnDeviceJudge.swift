@@ -22,6 +22,36 @@ enum OnDeviceJudge {
         #endif
     }
 
+    /// A long written answer as two or three spoken sentences. nil when the model is not available, fails, or takes over six seconds.
+    static func spoken(_ text: String) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask { await rewrite(text) }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(6))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private static func rewrite(_ text: String) async -> String? {
+        #if canImport(FoundationModels)
+        guard isAvailable else { return nil }
+        let session = LanguageModelSession(instructions: """
+            You turn a written message from an assistant into what a colleague would say out loud on a phone call.
+            Use at most three short sentences and plain words. Keep every decision, number, question and anything the listener must do.
+            No lists, no code, no file names. Add nothing that is not in the message. Reply with the spoken words only.
+            """)
+        guard let reply = try? await session.respond(to: String(text.prefix(4000))) else { return nil }
+        let words = reply.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return words.isEmpty ? nil : words
+        #else
+        return nil
+        #endif
+    }
+
     /// true = yes, false = no, nil = unclear or the model is not available.
     static func decision(_ heard: String) async -> Bool? {
         #if canImport(FoundationModels)

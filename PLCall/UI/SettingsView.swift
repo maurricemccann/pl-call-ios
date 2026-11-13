@@ -29,6 +29,14 @@ struct SettingsView: View {
         Binding(get: { model.spokenCues }, set: { model.setSpokenCues($0) })
     }
 
+    private var progress: Binding<Bool> {
+        Binding(get: { model.speakProgress }, set: { model.setSpeakProgress($0) })
+    }
+
+    private var short: Binding<Bool> {
+        Binding(get: { model.shortAnswers }, set: { model.setShortAnswers($0) })
+    }
+
     private var music: Binding<Bool> {
         Binding(get: { model.musicMode }, set: { model.setMusicMode($0) })
     }
@@ -71,6 +79,8 @@ struct SettingsView: View {
 
                 Section {
                     toggleRow("Cues", "A tone before Claude talks, \u{201C}Listening\u{201D} when it is your turn, \u{201C}Got it\u{201D} when your words are sent.", isOn: cues)
+                    toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
+                    toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
                     toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
                 }
 
