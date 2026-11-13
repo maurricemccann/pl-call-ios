@@ -9,8 +9,9 @@ check() { # label, pattern, then any extra paths to leave out
   local label="$1" pattern="$2"
   shift 2
   local hits hist
-  hits=$(git grep -n -I --untracked -E "$pattern" -- . ':!scripts/scan.sh' "$@" 2>/dev/null)
-  hist=$(git log --all -p --no-color -- . ':!scripts/scan.sh' "$@" 2>/dev/null | grep -n -E "^\+.*($pattern)" | head -3)
+  # "@call.local" is the app's own made-up contact handle (.local never routes on the internet), not a person's address
+  hits=$(git grep -n -I --untracked -E "$pattern" -- . ':!scripts/scan.sh' "$@" 2>/dev/null | grep -v -E '[a-z]+@call\.local')
+  hist=$(git log --all -p --no-color -- . ':!scripts/scan.sh' "$@" 2>/dev/null | grep -n -E "^\+.*($pattern)" | grep -v -E '[a-z]+@call\.local' | head -3)
   if [ -n "$hits" ] || [ -n "$hist" ]; then
     echo "FAIL: $label"; [ -n "$hits" ] && echo "$hits" | cut -c1-200 | head -5; [ -n "$hist" ] && echo "(history) $hist" | cut -c1-200; fail=1
   fi
