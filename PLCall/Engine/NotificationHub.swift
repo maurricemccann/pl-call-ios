@@ -57,13 +57,13 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         }
     }
 
-    func postPermission(requestID: String, toolUseID: String?, body: String, missed: Bool = false) {
+    func postPermission(requestID: String, toolUseID: String?, body: String, missed: Bool = false, sid: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = missed ? "Missed call from Psyclaupse" : "Claude needs your answer"
         content.body = body
         content.sound = .default
         content.categoryIdentifier = Self.category
-        content.userInfo = ["requestId": requestID, "toolUseId": toolUseID ?? ""]
+        content.userInfo = ["requestId": requestID, "toolUseId": toolUseID ?? "", "sid": sid ?? ""]
         post(content, identifier: "ask." + requestID)
     }
 
@@ -112,7 +112,9 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         let identifier = request.identifier
         let requestID = request.content.userInfo["requestId"] as? String
         let toolUseID = request.content.userInfo["toolUseId"] as? String
+        let sid = request.content.userInfo["sid"] as? String
         Task { @MainActor in
+            if let sid, !sid.isEmpty { CallModel.shared.sessionFromNotice = sid }
             await CallModel.shared.notificationAction(action, text: typed, identifier: identifier, requestID: requestID, toolUseID: toolUseID)
             completionHandler()
         }

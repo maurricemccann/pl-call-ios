@@ -30,6 +30,7 @@ enum VoiceTuning {
 
     private let synthesizer = AVSpeechSynthesizer()   // kept for the app's life: the system does not retain it
     private var pending: [ObjectIdentifier: AVSpeechUtterance] = [:]
+    private var cancelled: [ObjectIdentifier: AVSpeechUtterance] = [:]   // held until their callback arrives, so no address is reused early
     private var player: AVAudioPlayer?
     private var pcTask: Task<Void, Never>?
     private var generation = 0
@@ -170,6 +171,7 @@ enum VoiceTuning {
     /// Barge-in and End: silence at once. Does not call `onFinished`.
     func stop() {
         generation += 1
+        cancelled.merge(pending) { old, _ in old }
         pending.removeAll()
         _ = synthesizer.stopSpeaking(at: .immediate)
         pcTask?.cancel()
@@ -287,6 +289,7 @@ enum VoiceTuning {
     }
 
     private func ended(_ id: ObjectIdentifier) {
+        if cancelled.removeValue(forKey: id) != nil { return }
         guard pending.removeValue(forKey: id) != nil, pending.isEmpty else { return }
         speakingText = ""
         onFinished?()

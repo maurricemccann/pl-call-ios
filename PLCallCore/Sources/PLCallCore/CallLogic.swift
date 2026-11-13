@@ -34,6 +34,16 @@ public struct EventReducer: Sendable {
         }
     }
 
+    /// The permission or question the session is blocked on, when the backlog ENDS on one (nothing after it).
+    public static func waitingAsk(_ backlog: [SessionEvent]) -> Ask? {
+        guard let e = backlog.max(by: { $0.sequenceNum < $1.sequenceNum }), e.isBlockingControl == true,
+              let p = e.permissionRequest, let rid = e.requestId else { return nil }
+        if let q = p.questions.first {
+            return .question(requestId: rid, toolUseId: e.toolUseId, question: q, input: p.input)
+        }
+        return .permission(requestId: rid, toolUseId: e.toolUseId, forWhat: p.forWhat, what: p.what)
+    }
+
     /// After the app sends his words or an answer: wait for Claude's turn to end.
     public mutating func sent() { waiting = true; reply = "" }
 

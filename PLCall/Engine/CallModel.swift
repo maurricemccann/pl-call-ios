@@ -64,12 +64,14 @@ struct Turn: Identifiable, Equatable {
     private let remote = RemoteCommands()
     private let keepAlive = KeepAlive()
     @ObservationIgnored private var idleRingTask: Task<Void, Never>?
+    @ObservationIgnored private var awakeTask: UIBackgroundTaskIdentifier = .invalid   // the gap between a ring and the background line
     @ObservationIgnored private var config: PLCallConfig?
     @ObservationIgnored private var reducer = EventReducer()
     @ObservationIgnored private var arm = QuickReplyArm()
     @ObservationIgnored private var sid: String?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var lineGeneration = 0
+    @ObservationIgnored private var lineRetry = 5.0
     @ObservationIgnored private var loading: Task<Void, Never>?
     @ObservationIgnored private var routeTask: Task<Void, Never>?
     @ObservationIgnored private var armed = false            // PUSH mode: one turn was asked for
@@ -317,7 +319,8 @@ struct Turn: Identifiable, Equatable {
             do {
                 let path = try await line.upload(jpeg: jpeg)
                 let words = (note?.isEmpty == false ? note! + " " : "") + "I sent you a picture. It is at \(path). Open it and look."
-                self.took(words)
+                self.append(.me, words)
+                self.deliver(words)   // never an answer to a waiting question or permission
             } catch {
                 self.note("The picture did not send: \(plainSentence(error))")
             }
@@ -460,9 +463,13 @@ struct Turn: Identifiable, Equatable {
 
     /// In the background with no call: hold the line open so an ask or a waiting session can ring the phone.
     fileprivate func stayReachableIfWanted() {
-        guard stayReachable, hasConfig, !isInCall, !callKit.isBusy, UIApplication.shared.applicationState != .active else { return }
+        guard stayReachable, hasConfig, !isInCall, !callKit.isBusy, UIApplication.shared.applicationState != .active else {
+            if isInCall || UIApplication.shared.applicationState == .active { letGoOfAwake() }
+            return
+        }
         keepAlive.start()
         RingLog.note(keepAlive.isOn ? "background line on" : "background line FAILED to start")
+        if keepAlive.isOn { letGoOfAwake() }
     }
 
     /// A real call put Claude on hold: stop talking and listening. Coming back, the audio returns through CallKit.
@@ -485,6 +492,24 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    /// Asks iOS for up to about 30 seconds of running time while the background line is down, so the app is not
+    /// suspended between a ring (or a call) ending and the line coming back.
+    private func holdAwake(_ why: String) {
+        guard awakeTask == .invalid else { return }
+        awakeTask = UIApplication.shared.beginBackgroundTask(withName: why) { [weak self] in
+            Task { @MainActor in
+                RingLog.note("background time ran out before the line came back")
+                self?.letGoOfAwake()
+            }
+        }
+    }
+
+    private func letGoOfAwake() {
+        guard awakeTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(awakeTask)
+        awakeTask = .invalid
+    }
+
     /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
     /// While he is on another call (his girlfriend, anyone) it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
@@ -496,6 +521,7 @@ struct Turn: Identifiable, Equatable {
             RingLog.note("no ring: a Focus filter says notifications only")
             return nil
         }
+        holdAwake("ring")   // until the background line is back after the ring, or a call takes over
         head.start()   // two nods answer the ring, two shakes decline it
         remote.enable()   // the AirPods stem: one press answers, two decline
         keepAlive.stop()
@@ -503,6 +529,7 @@ struct Turn: Identifiable, Equatable {
         let refused = await callKit.ring(reason: reason)
         RingLog.note(refused.map { "ring refused: \($0)" } ?? "rang: \(reason)")
         if refused != nil {
+            if !isInCall { remote.disable() }
             if !(pendingAsk.map { if case .permission = $0 { return true } else { return false } } ?? false) { head.stop() }
             stayReachableIfWanted()
         }
@@ -562,6 +589,8 @@ struct Turn: Identifiable, Equatable {
     // MARK: called by the other engine parts
 
     /// A notification action. It may arrive in a process the system just launched in the background, so it waits for the config.
+    @ObservationIgnored var sessionFromNotice: String?   // set by the notification handler before an answer is sent
+
     func notificationAction(_ action: String, text: String?, identifier: String, requestID: String?, toolUseID: String?) async {
         if identifier.hasPrefix(NotificationHub.probePrefix) {
             probe.sawNotification(action: action, text: text)
@@ -591,9 +620,16 @@ struct Turn: Identifiable, Equatable {
         if let ask = pendingAsk, case .permission(let waiting, _, _, _) = ask, waiting == requestID {
             resolve(ask)
             note(allow ? "Allowed." : "Denied.")
+        } else if reducer.lastSeq > 0 {
+            // the app was running and this request is no longer waiting: it was answered already (by voice, the watch, the PC)
+            RingLog.note("a notice answer for a request that is no longer waiting was not sent")
+            return
         }
         do {
-            if sid == nil { sid = try await line.sessions().first?.id }
+            if sid == nil {
+                let live = try await line.sessions()
+                sid = (live.first { $0.id == sessionFromNotice } ?? live.first { $0.id == chosenSession } ?? live.first)?.id
+            }
             guard let sid else { return }
             sentSomething()
             let tool = (toolUseID?.isEmpty ?? true) ? nil : toolUseID
@@ -618,7 +654,7 @@ struct Turn: Identifiable, Equatable {
     private func noteMissedRing() {
         switch pendingAsk {
         case .permission(let requestID, let toolUseID, let forWhat, _)?:
-            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, missed: true)
+            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, missed: true, sid: sid)
         case .question(let requestID, _, let question, _)?:
             NotificationHub.shared.postQuestion(requestID: requestID, body: question.question, options: question.options, missed: true)
         case nil:
@@ -651,9 +687,12 @@ struct Turn: Identifiable, Equatable {
         callKit.onDeclined = { [weak self] in
             guard let self else { return }
             RingLog.note("ring ended without an answer")
-            if !self.isInCall { self.remote.disable() }
+            if !self.isInCall {
+                self.remote.disable()
+                self.head.stop()
+            }
             if !self.probe.sawRing(answered: false) { self.noteMissedRing() }
-            if !self.pendingIsPermission { self.head.stop() }
+            if !self.isInCall { self.head.stop() }
             self.backToReachable()
         }
         callKit.onMuteToggled = { [weak self] in self?.talk() }
@@ -704,8 +743,13 @@ struct Turn: Identifiable, Equatable {
                 for event in backlog where event.sequenceNum > reducer.lastSeq { took(event) }
             } else {
                 reducer.prime(backlog)
+                if pendingAsk == nil, let waiting = EventReducer.waitingAsk(backlog) {
+                    sid = session.id
+                    raise(waiting)   // the PC is blocked on it: ring or post it now
+                }
             }
             sid = session.id
+            lineRetry = 5
             sessionTitle = session.title ?? session.id
             lineIsUp(true)
             let stream = line.stream(sid: session.id, fromSeq: reducer.lastSeq) { up in
@@ -721,7 +765,10 @@ struct Turn: Identifiable, Equatable {
         }
         guard generation == lineGeneration else { return }
         streamTask = nil
-        try? await Task.sleep(for: .seconds(5))   // then look for the session again
+        // then look for the session again: every 5 s in a call, backing off to 2 minutes with no call (the PC may be asleep)
+        let wait = isInCall ? 5.0 : lineRetry
+        lineRetry = min(lineRetry * 2, 120)
+        try? await Task.sleep(for: .seconds(wait))
         guard generation == lineGeneration else { return }
         connect()
     }
@@ -755,7 +802,9 @@ struct Turn: Identifiable, Equatable {
         let outputs = reducer.ingest(event)
         guard reducer.lastSeq != before else { return }
         if !isInCall { sessionMoved(turnEnded: event.type == "result" || event.isTurnEnd == true) }
-        if outputs.isEmpty, let ask = pendingAsk, event.type != "control_request", event.isBlockingControl != true {
+        let moved = event.type == "result" || event.isTurnEnd == true || event.role == "user"
+            || (event.role == "assistant" && !(event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        if outputs.isEmpty, let ask = pendingAsk, moved, event.type != "control_request", event.isBlockingControl != true {
             // The session moved on: the ask was answered on the PC or another screen.
             resolve(ask)
             rest()
@@ -860,8 +909,8 @@ struct Turn: Identifiable, Equatable {
         case .permission(let requestID, let toolUseID, let forWhat, let what):
             let line = forWhat + " Say yes or no."
             append(.claude, what.isEmpty ? line : line + "\n" + what)
-            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat)
-            head.start()
+            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, sid: sid)
+            if isInCall { head.start() }   // a ring starts its own head reading; with no call nothing needs it (battery)
         case .question(let requestID, _, let question, _):
             append(.claude, spokenLine(for: ask))
             NotificationHub.shared.postQuestion(requestID: requestID, body: question.question, options: question.options)
@@ -1074,10 +1123,10 @@ struct Turn: Identifiable, Equatable {
         let words = own.joined(separator: " ")
         guard !words.isEmpty else { return nil }
         // the option whose name shares a word with what he said (option names are in the spoken text, so match on his own words)
-        let said = Set(heard.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
+        let said = Set(own)
         let hits = question.options.filter { option in
             let name = Set(option.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
-            return !name.isDisjoint(with: said) && heard.lowercased().contains(option.lowercased())
+            return !name.isEmpty && name.isSubset(of: said)
         }
         return hits.count == 1 ? hits[0] : nil
     }
@@ -1140,8 +1189,10 @@ struct Turn: Identifiable, Equatable {
         lastSpoke = Date()
         awakeUntil = Date().addingTimeInterval(20)   // wake word mode: a follow-up needs no name
         guard isInCall else {
+            keepAlive.stop()
             AudioSessionManager.deactivate()
             rest()
+            stayReachableIfWanted()
             return
         }
         let listener = self.listener
@@ -1154,7 +1205,11 @@ struct Turn: Identifiable, Equatable {
     private func voiceFailed(_ message: String) {
         note(message)
         lastError = message
-        if !isInCall { AudioSessionManager.deactivate() }
+        if !isInCall {
+            keepAlive.stop()
+            AudioSessionManager.deactivate()
+            stayReachableIfWanted()
+        }
         rest(message)
     }
 
@@ -1240,7 +1295,23 @@ struct Turn: Identifiable, Equatable {
     private func audioChanged(_ change: AudioSessionManager.Change) {
         if change == .routeChanged || change == .engineReset { matchProximityToRoute() }
         guard isInCall else {
-            if change == .resumed { keepAlive.resume() }
+            switch change {
+            case .interrupted:
+                if keepAlive.isOn {
+                    RingLog.note("background line interrupted")
+                    holdAwake("interrupted")
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        self.keepAlive.resume()
+                        self.stayReachableIfWanted()
+                    }
+                }
+            case .resumed:
+                keepAlive.resume()
+                stayReachableIfWanted()
+            default:
+                break
+            }
             return
         }
         let listener = self.listener
@@ -1301,6 +1372,7 @@ struct Turn: Identifiable, Equatable {
         let listener = self.listener
         let releaseAudio = ownsAudio
         ownsAudio = false
+        holdAwake("call ended")
         Task {
             await listener.stop()
             if releaseAudio { AudioSessionManager.deactivate() }
