@@ -69,7 +69,8 @@ enum VoiceTuning {
                 utterance.rate = Float(VoiceTuning.rate)
                 utterance.pitchMultiplier = Float(VoiceTuning.pitch)
                 // his Settings > Accessibility > Spoken Content choices (rate, pitch, equalizer) win when he turns this on
-                utterance.prefersAssistiveTechnologySettings = UserDefaults.standard.bool(forKey: "plcall.useSpokenContent")
+                // never with his Personal Voice: the system's Spoken Content voice would replace it mid-reply
+                utterance.prefersAssistiveTechnologySettings = voiceID != Self.personal && UserDefaults.standard.bool(forKey: "plcall.useSpokenContent")
                 utterance.postUtteranceDelay = 0.10
                 if tone, pending.isEmpty { utterance.preUtteranceDelay = 0.22 }   // the tone plays first
                 pending[ObjectIdentifier(utterance)] = utterance
@@ -88,10 +89,13 @@ enum VoiceTuning {
 
     /// A short spoken cue ("Listening", "Got it") in the iPhone voice. Never while an answer is being spoken,
     /// and it never calls `onFinished`: the delegate ignores utterances that are not in `pending`.
+    /// The iPhone voice he chose ("phone" or "personal"), so the short cues speak in it too.
+    var chosenVoice = Speaker.phone
+
     func cue(_ words: String) {
         guard !isSpeaking else { return }
         let utterance = AVSpeechUtterance(string: words)
-        utterance.voice = Self.bestVoice()
+        utterance.voice = chosenVoice == Self.personal ? (Self.personalVoice() ?? Self.bestVoice()) : Self.bestVoice()
         utterance.rate = Float(VoiceTuning.rate)
         utterance.pitchMultiplier = Float(VoiceTuning.pitch)
         utterance.volume = 0.8

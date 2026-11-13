@@ -41,7 +41,9 @@ struct Turn: Identifiable, Equatable {
     var speakProgress = true             // short lines Claude writes while it works are spoken too
     var shortAnswers = true              // a long answer is said as a few sentences (on-device model), the full text stays on screen
     var voices: [PLCallConfig.Voice] = []
-    var voiceID = Speaker.phone
+    var voiceID = Speaker.phone {
+        didSet { speaker.chosenVoice = voiceID }   // the cues follow the chosen voice
+    }
     var quickReplies: [PLCallConfig.QuickReply] = []
     var armedReply: String?
     var pendingAsk: Ask?

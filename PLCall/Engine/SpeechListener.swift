@@ -54,7 +54,7 @@ final class MicTap: @unchecked Sendable {
         // Voice processing ducks other audio by default, which would quieten Claude's own voice.
         let level = UserDefaults.standard.object(forKey: "plcall.duckLevel") as? Int ?? 2   // 0 barely, 1 some, 2 a lot (default: his report 11-12, music at full strength drowned the voice)
         input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-            enableAdvancedDucking: ObjCBool(level > 0), duckingLevel: level == 2 ? .max : level == 1 ? .mid : .min)
+            enableAdvancedDucking: false, duckingLevel: level == 2 ? .max : level == 1 ? .mid : .min)   // steady, not pumping (his report 11-12)
         let source = input.outputFormat(forBus: 0)
         guard source.sampleRate > 0, source.channelCount > 0, let converter = AVAudioConverter(from: source, to: target) else {
             throw PlainError(message: "The microphone is not available.")
