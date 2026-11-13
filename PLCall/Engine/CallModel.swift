@@ -70,7 +70,8 @@ struct Turn: Identifiable, Equatable {
     private let remote = RemoteCommands()
     private let keepAlive = KeepAlive()
     @ObservationIgnored private var idleRingTask: Task<Void, Never>?
-    @ObservationIgnored private var awakeTask: UIBackgroundTaskIdentifier = .invalid   // the gap between a ring and the background line
+    @ObservationIgnored private var awakeTask: UIBackgroundTaskIdentifier = .invalid
+    @ObservationIgnored private var reachRetries = 0   // the gap between a ring and the background line
     @ObservationIgnored private var config: PLCallConfig?
     @ObservationIgnored private var reducer = EventReducer()
     @ObservationIgnored private var arm = QuickReplyArm()
@@ -551,8 +552,22 @@ struct Turn: Identifiable, Equatable {
             return
         }
         keepAlive.start()
-        RingLog.note(keepAlive.isOn ? "background line on" : "background line FAILED to start")
-        if keepAlive.isOn { letGoOfAwake() }
+        if keepAlive.isOn {
+            if reachRetries > 0 { RingLog.note("background line on (after \(reachRetries) retries)") }
+            reachRetries = 0
+            letGoOfAwake()
+            return
+        }
+        // his Ring log 11-12 9:04 PM: "background line FAILED to start" with nothing after it. Another app can hold the
+        // audio for a moment (a call, a recording, Siri); try again every 3 s for about 30 s, inside held background time.
+        RingLog.note("background line FAILED to start: \(keepAlive.lastError)")
+        guard reachRetries < 10 else { return }
+        reachRetries += 1
+        holdAwake("background line retry")
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            self.stayReachableIfWanted()
+        }
     }
 
     /// A real call put Claude on hold: stop talking and listening. Coming back, the audio returns through CallKit.

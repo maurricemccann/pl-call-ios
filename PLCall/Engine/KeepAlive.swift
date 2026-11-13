@@ -7,6 +7,7 @@ import AVFoundation
     private var player: AVAudioPlayer?
 
     var isOn: Bool { player != nil }
+    private(set) var lastError = ""   // why the last start failed, for the Ring log
 
     func start() {
         if player != nil {
@@ -23,6 +24,7 @@ import AVFoundation
             player = silence
         } catch {
             player = nil
+            lastError = error.localizedDescription
         }
     }
 
