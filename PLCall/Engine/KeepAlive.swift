@@ -9,7 +9,10 @@ import AVFoundation
     var isOn: Bool { player != nil }
 
     func start() {
-        guard player == nil else { return }
+        if player != nil {
+            resume()
+            return
+        }
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
@@ -31,6 +34,7 @@ import AVFoundation
     /// After an interruption (another app's audio) the player is paused: start it again.
     func resume() {
         guard let player, !player.isPlaying else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
         _ = player.play()
     }

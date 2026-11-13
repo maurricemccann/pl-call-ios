@@ -388,6 +388,14 @@ struct Turn: Identifiable, Equatable {
         keepAlive.start()
     }
 
+    /// After a ring: the system has just released the audio, so wait a moment, then hold the line again.
+    private func backToReachable() {
+        Task {
+            try? await Task.sleep(for: .milliseconds(800))
+            self.stayReachableIfWanted()
+        }
+    }
+
     fileprivate func cameToFront() {
         keepAlive.stop()
         idleRingTask?.cancel()   // he is looking at it
@@ -480,7 +488,11 @@ struct Turn: Identifiable, Equatable {
         callKit.onAudioInactive = { [weak self] in self?.audioDeactivated() }
         callKit.onEnded = { [weak self] in self?.finishCall() }
         callKit.onAnswered = { [weak self] in self?.ringAnswered() }
-        callKit.onDeclined = { [weak self] in _ = self?.probe.sawRing(answered: false) }
+        callKit.onDeclined = { [weak self] in
+            guard let self else { return }
+            _ = self.probe.sawRing(answered: false)
+            self.backToReachable()
+        }
         callKit.onMuteToggled = { [weak self] in self?.talk() }
         IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
         IntentBridge.deny = { [weak self] message in self?.answerPermission(allow: false, message: message) }
@@ -992,7 +1004,10 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func audioDeactivated() {
-        guard isInCall else { return }
+        guard isInCall else {
+            backToReachable()   // a ring ended: the system took the audio, take the background line back
+            return
+        }
         speaker.stop()
         set(.lost, "The call's audio was taken by something else.")
     }
