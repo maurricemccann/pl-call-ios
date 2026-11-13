@@ -13,6 +13,8 @@
 	<string>Call turns what you say into text on this iPhone, then sends the text to your session.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Call reads a nod or a shake of your head from your AirPods, so you can answer without your hands.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to send to Claude during a call. It goes only to your own PC.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Call adds one card named Claude, so calls with Claude show his name and picture in Recents. It reads nothing else.</string>
 	<key>NSPersonalVoiceUsageDescription</key>

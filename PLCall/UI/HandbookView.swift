@@ -17,10 +17,10 @@ struct HandbookView: View {
     private let parts: [Part] = [
         Part(title: "The call", entries: [
             Entry(title: "Call and End", body: "Press the round button to call your session on the PC. Talk, stop, and Claude answers out loud. Press it again to end. The call keeps going with the phone locked."),
-            Entry(title: "AUTO and PUSH", body: "AUTO listens all the time. PUSH opens the mic only when you press Talk, in the app or on the Lock Screen."),
+            Entry(title: "AUTO and PUSH", body: "The round button at the bottom left. Orange is AUTO: it listens all the time. Blue is PUSH: the mic opens only when you press Talk, in the app or on the Lock Screen. Press it to switch."),
             Entry(title: "Cues", body: "A short tone means Claude is about to talk. \u{201C}Listening\u{201D} means it is your turn. \u{201C}Got it\u{201D} means your words were sent. \u{201C}Line dropped\u{201D} means the PC stopped answering."),
             Entry(title: "The pause", body: "Your words are sent after you go quiet. Settings sets how long it waits, from 1 to 4 seconds. Longer lets you stop and think mid-sentence."),
-            Entry(title: "Send a picture", body: "Press the picture button and pick a photo or a screenshot. It goes to your PC and Claude is told where it is, so it can look. Pictures are kept on the PC for 7 days."),
+            Entry(title: "Send a picture", body: "Press the camera button: take a photo, or choose one (a screenshot) from Photos. It goes to your PC and Claude is told where it is, so it can look. Pictures are kept on the PC for 7 days."),
             Entry(title: "Mute", body: "In AUTO, press the AirPods stem to mute your mic and press again to unmute, like a phone call. If you talk while muted, the call tells you. In PUSH, a press takes a turn."),
             Entry(title: "Siri", body: "Say \u{201C}What does Psyclaupse need?\u{201D} and Siri reads what Claude is waiting on. \u{201C}Start a Psyclaupse\u{201D} calls. Siri learns the times you usually call."),
             Entry(title: "Voice commands", body: "Say only \u{201C}stop\u{201D} while Claude talks to cut it off. \u{201C}Say that again\u{201D}, \u{201C}slower\u{201D}, \u{201C}faster\u{201D} and \u{201C}end the call\u{201D} work any time. A sentence that merely contains these words goes to Claude as normal."),

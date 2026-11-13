@@ -16,6 +16,8 @@ struct CallScreen: View {
 
     @State private var panel: Panel? = nil
     @State private var picked: PhotosPickerItem?
+    @State private var showsPhotos = false
+    @State private var showsCamera = false
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @State private var selectTick = 0
     @State private var connectTick = 0
@@ -215,13 +217,18 @@ struct CallScreen: View {
                         }
                     }
                 } else {
-                    HStack(spacing: T.gap) {
-                        modeSwitch
+                    // two rows (his 8:2x PM note: "the UI at the bottom looks squished"): the quick replies get the full
+                    // width above, the mode switch and the round buttons sit below with room to breathe
+                    VStack(spacing: T.gap) {
                         quickReplies
-                        audioButton
-                        pictureButton
-                        talkButton
-                        callButton
+                        HStack(spacing: T.gap) {
+                            modeSwitch
+                            Spacer(minLength: 0)
+                            audioButton
+                            pictureButton
+                            talkButton
+                            callButton
+                        }
                     }
                 }
             }
@@ -258,41 +265,22 @@ struct CallScreen: View {
 
     // MARK: Controls
 
+    /// One round button (his ruling 11-12): orange = AUTO (always listening), blue = PUSH (press Talk for each turn).
     private var modeSwitch: some View {
-        HStack(spacing: 0) {
-            modeButton("AUTO", handsFree: true)
-            modeButton("PUSH", handsFree: false)
-        }
-        .padding(.horizontal, 3)
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .fixedSize()   // never squeezed: the quick replies take what is left (his 8:22 PM screenshot showed "A UT O")
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Listening mode")
-    }
-
-    private func modeButton(_ title: String, handsFree: Bool) -> some View {
-        let selected = model.handsFree == handsFree
-        return Button {
+        Button {
             selectTick += 1
-            if !selected {
-                model.setHandsFree(handsFree)
-            } else if !handsFree && model.isInCall {
-                model.talk()   // already on PUSH: a press talks, as on the R1
-            }
+            model.setHandsFree(!model.handsFree)
         } label: {
-            Text(title)
-                .plFont(.caption, emphasized: true)
-                .lineLimit(1)
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .padding(.horizontal, 10)
-                .frame(minHeight: 38)
-                .background(selected ? T.plate : Color.clear, in: Capsule())
-                .frame(minHeight: T.touch)
-                .contentShape(Rectangle())
+            Image(systemName: model.handsFree ? "waveform" : "hand.tap.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: T.touch, height: T.touch)
+                .background(model.handsFree ? T.orange : Color.blue, in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(handsFree ? "Auto, hands-free" : "Push to talk")
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel(model.handsFree ? "Listening: AUTO" : "Listening: PUSH")
+        .accessibilityHint("Switches between always listening and press to talk")
     }
 
     private var quickReplies: some View {
@@ -343,14 +331,35 @@ struct CallScreen: View {
 
     /// A picture or a screenshot from Photos, sent to Claude.
     private var pictureButton: some View {
-        PhotosPicker(selection: $picked, matching: .images) {
-            Image(systemName: "photo.on.rectangle")
+        Menu {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
+                    showsCamera = true
+                } label: {
+                    Label("Take a photo", systemImage: "camera")
+                }
+            }
+            Button {
+                showsPhotos = true
+            } label: {
+                Label("Choose from Photos", systemImage: "photo.on.rectangle")
+            }
+        } label: {
+            Image(systemName: "camera.fill")
                 .font(.system(size: 17, weight: .semibold))
                 .frame(width: T.touch, height: T.touch)
                 .contentShape(Circle())
         }
         .glassControl(in: Circle())
         .accessibilityLabel("Send Claude a picture")
+        .photosPicker(isPresented: $showsPhotos, selection: $picked, matching: .images)
+        .fullScreenCover(isPresented: $showsCamera) {
+            CameraPicker { image in
+                selectTick += 1
+                model.sendPicture(image)
+            }
+            .ignoresSafeArea()
+        }
         .onChange(of: picked) { _, item in
             guard let item else { return }
             Task {
