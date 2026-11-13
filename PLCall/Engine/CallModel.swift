@@ -33,6 +33,8 @@ struct Turn: Identifiable, Equatable {
     var handsFree = true
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
+    var workBeat = 0                     // one per session event while Claude works: the avatar's glow sweeps on each
+    var workingSounds = true             // a soft tick on those events, so a long turn is not silence
     var isMuted = false                  // his mic is muted (the AirPods press in AUTO, or the screen)
     var stayReachable = true             // no call up: keep the line open in the background so Claude can ring
     var wakeWord = false                 // hands-free: only words after "Claude" are sent
@@ -113,6 +115,7 @@ struct Turn: Identifiable, Equatable {
         static let music = "plcall.musicMode"
         static let progress = "plcall.speakProgress"
         static let wake = "plcall.wakeWord"
+        static let workTicks = "plcall.workingSounds"
         static let session = "plcall.session"
         static let reach = "plcall.stayReachable"
         static let idle = "plcall.idleRingMinutes"
@@ -125,6 +128,7 @@ struct Turn: Identifiable, Equatable {
         musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
         wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
+        workingSounds = UserDefaults.standard.object(forKey: Keys.workTicks) as? Bool ?? true
         stayReachable = UserDefaults.standard.object(forKey: Keys.reach) as? Bool ?? true
         chosenSession = UserDefaults.standard.string(forKey: Keys.session)
         shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? false   // off: he hears everything (his report 11-12)
@@ -451,6 +455,12 @@ struct Turn: Identifiable, Equatable {
     }
 
     @ObservationIgnored private var lastMutedWarning = Date.distantPast
+    @ObservationIgnored private var lastTick = Date.distantPast
+
+    func setWorkingSounds(_ on: Bool) {
+        workingSounds = on
+        UserDefaults.standard.set(on, forKey: Keys.workTicks)
+    }
 
     private func spokeWhileMuted() {
         guard isMuted, Date().timeIntervalSince(lastMutedWarning) > 10 else { return }
@@ -842,6 +852,13 @@ struct Turn: Identifiable, Equatable {
         let outputs = reducer.ingest(event)
         guard reducer.lastSeq != before else { return }
         if !isInCall { sessionMoved(turnEnded: event.type == "result" || event.isTurnEnd == true) }
+        if isInCall, awaitingReply, pendingAsk == nil, event.type != "result", event.isTurnEnd != true {
+            workBeat += 1
+            if workingSounds, !speaker.isSpeaking, state != .hearing, Date().timeIntervalSince(lastTick) > 3 {
+                lastTick = Date()
+                speaker.tick()
+            }
+        }
         let moved = event.type == "result" || event.isTurnEnd == true || event.role == "user"
             || (event.role == "assistant" && !(event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         if outputs.isEmpty, let ask = pendingAsk, moved, event.type != "control_request", event.isBlockingControl != true {

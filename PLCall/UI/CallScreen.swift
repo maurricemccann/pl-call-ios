@@ -164,7 +164,8 @@ struct CallScreen: View {
                     panel = .settings
                 } label: {
                     VStack(spacing: 4) {
-                        ClaudeAvatar(ring: ringColor, speaking: model.state == .speaking && !reduceMotion)
+                        ClaudeAvatar(ring: ringColor, speaking: model.state == .speaking && !reduceMotion,
+                                     working: model.state == .working && !reduceMotion, beat: model.workBeat)
                         HStack(spacing: 6) {
                             StateDot(state: model.state)
                             Text("Claude").plHand(17, relativeTo: .headline)

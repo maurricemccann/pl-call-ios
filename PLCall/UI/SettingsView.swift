@@ -41,6 +41,10 @@ struct SettingsView: View {
         Binding(get: { model.stayReachable }, set: { model.setStayReachable($0) })
     }
 
+    private var ticks: Binding<Bool> {
+        Binding(get: { model.workingSounds }, set: { model.setWorkingSounds($0) })
+    }
+
     private var wake: Binding<Bool> {
         Binding(get: { model.wakeWord }, set: { model.setWakeWord($0) })
     }
@@ -125,6 +129,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     toggleRow("Wake word", "Hands-free only. The mic stays open, but only what you say after \u{201C}Claude\u{201D} is sent, and follow-ups within 20 seconds.", isOn: wake)
+                    toggleRow("Working sounds", "A soft tick while Claude works, so a long turn is not silence.", isOn: ticks)
                     toggleRow("Edge light", "A glow around the screen while the microphone hears you.", isOn: $edgeLight)
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)

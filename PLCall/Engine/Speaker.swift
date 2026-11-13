@@ -114,6 +114,16 @@ enum VoiceTuning {
         text.lowercased().split { !$0.isLetter }.map(String.init)
     }
 
+    /// A very soft short tick: Claude is still working (at most every 3 seconds, never over speech).
+    func tick() {
+        guard !isSpeaking, let player = try? AVAudioPlayer(data: Self.tickData) else { return }
+        player.volume = 0.18
+        tonePlayer = player
+        _ = player.play()
+    }
+
+    private static let tickData: Data = wav([(1320, 0.03)])
+
     enum Chime { case connected, ended }
 
     /// The call connecting (rising) or ending (falling), like a phone call's own sounds.

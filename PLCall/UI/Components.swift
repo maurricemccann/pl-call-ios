@@ -39,14 +39,35 @@ struct StateDot: View {
 struct ClaudeAvatar: View {
     let ring: Color
     var speaking = false
+    var working = false
+    var beat = 0
     var size: CGFloat = 46
+    @State private var flash = 0.0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !speaking)) { context in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !speaking && !working)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             // two slow waves together read as speech, not a metronome
             let swell = speaking ? 1 + 0.045 * (sin(t * 7.1) * 0.6 + sin(t * 11.3) * 0.4) : 1
-            face.scaleEffect(swell)
+            face
+                .scaleEffect(swell)
+                .overlay {
+                    if working {
+                        // the R1 Call's working glow: blue, violet, red, orange, turning
+                        Circle()
+                            .strokeBorder(AngularGradient(colors: [Color(red: 0, green: 0.57, blue: 1), Color(red: 0.86, green: 0.2, blue: 0.95),
+                                                                   Color(red: 1, green: 0.22, blue: 0.37), Color(red: 1, green: 0.57, blue: 0.19),
+                                                                   Color(red: 0, green: 0.57, blue: 1)], center: .center),
+                                          lineWidth: max(2.5, size * 0.07))
+                            .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 3) * 120))
+                            .opacity(0.55 + 0.45 * flash)
+                            .blur(radius: 0.5)
+                    }
+                }
+        }
+        .onChange(of: beat) { _, _ in
+            flash = 1
+            withAnimation(.easeOut(duration: 0.6)) { flash = 0 }
         }
     }
 
