@@ -74,6 +74,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var awakeUntil = Date.distantPast   // wake word mode: no name needed until then
     @ObservationIgnored private var lastSpoke = Date.distantPast    // when the voice last stopped
     @ObservationIgnored private var lastHearingPublish = Date.distantPast
+    @ObservationIgnored private var onHold = false           // a real call has Claude on hold
     @ObservationIgnored private var spokenAsk: String?       // the ask already read out, so it is not read again
     @ObservationIgnored private var lockLine = ""            // the last thing said by either side, for the Lock Screen
     @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
@@ -393,12 +394,19 @@ struct Turn: Identifiable, Equatable {
     private func heldByOtherCall(_ held: Bool) {
         guard isInCall else { return }
         if held {
+            onHold = true
             speaker.stop()
             listener.setAccepting(false)
             set(.lost, "On hold for another call")
-        } else {
-            updateGate()
-            rest()
+            return
+        }
+        onHold = false
+        spokenAsk = nil   // back from the other call: a waiting question is read again
+        if heldReply == nil, pendingAsk == nil, !reducer.lastSaid.isEmpty, spokenCues { speaker.cue("Welcome back") }
+        // CallKit gives the audio back and the call picks up from there; if it has not after a second, pick up anyway
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            if self.isInCall, !self.onHold, self.state == .lost { self.audioActivated() }
         }
     }
 
@@ -756,9 +764,11 @@ struct Turn: Identifiable, Equatable {
         state = .waitingApproval
         statusLine = Say.waiting
         publish(alert: true)
-        if isInCall {
+        if isInCall, !onHold {
             spokenAsk = Self.id(of: ask)
             speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: spokenCues)
+        } else if isInCall {
+            // on hold for a real call: read when he comes back
         } else if UIApplication.shared.applicationState != .active {
             let reason = "Claude needs you"
             Task {
@@ -984,6 +994,10 @@ struct Turn: Identifiable, Equatable {
             rest()
             return
         }
+        if onHold {
+            heldReply = text   // said when he comes back from the other call
+            return
+        }
         let written = SpokenText.make(text).sentences.joined(separator: " ")
         guard shortAnswers, written.count > 450, OnDeviceJudge.isAvailable else {
             voice(text, tone: spokenCues)
@@ -1156,6 +1170,7 @@ struct Turn: Identifiable, Equatable {
         heldReply = nil
         interimTask?.cancel()
         interimSpoken = ""
+        onHold = false
         lockLine = ""
         micLevel = 0
         speaker.stop()
