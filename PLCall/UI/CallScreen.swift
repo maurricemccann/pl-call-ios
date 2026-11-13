@@ -206,8 +206,8 @@ struct CallScreen: View {
             statusLines
             GlassEffectContainer {
                 if typeSize.isAccessibilitySize {
+                    // his layout 11-12: the mode switch and the round buttons on top, his slash commands below
                     VStack(spacing: T.gap) {
-                        quickReplies
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
@@ -216,12 +216,13 @@ struct CallScreen: View {
                             talkButton
                             callButton
                         }
+                        quickReplies
                     }
                 } else {
                     // two rows (his 8:2x PM note: "the UI at the bottom looks squished"): the quick replies get the full
                     // width above, the mode switch and the round buttons sit below with room to breathe
+                    // his layout 11-12: the mode switch and the round buttons on top, his slash commands below
                     VStack(spacing: T.gap) {
-                        quickReplies
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
@@ -230,6 +231,7 @@ struct CallScreen: View {
                             talkButton
                             callButton
                         }
+                        quickReplies
                     }
                 }
             }
@@ -266,22 +268,42 @@ struct CallScreen: View {
 
     // MARK: Controls
 
-    /// One round button (his ruling 11-12): orange = AUTO (always listening), blue = PUSH (press Talk for each turn).
+    /// AUTO | PUSH as two segments (his ruling 11-12: the single circle was only for the R1's tiny screen).
+    /// The chosen one is filled: orange for AUTO, blue for PUSH.
     private var modeSwitch: some View {
-        Button {
+        HStack(spacing: 0) {
+            modeButton("AUTO", handsFree: true)
+            modeButton("PUSH", handsFree: false)
+        }
+        .padding(.horizontal, 3)
+        .glassEffect(.regular.interactive(), in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Listening mode")
+    }
+
+    private func modeButton(_ title: String, handsFree: Bool) -> some View {
+        let selected = model.handsFree == handsFree
+        return Button {
             selectTick += 1
-            model.setHandsFree(!model.handsFree)
+            if !selected {
+                model.setHandsFree(handsFree)
+            } else if !handsFree && model.isInCall {
+                model.talk()   // already on PUSH: a press talks, as on the R1
+            }
         } label: {
-            Image(systemName: model.handsFree ? "waveform" : "hand.tap.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: T.touch, height: T.touch)
-                .background(model.handsFree ? T.orange : Color.blue, in: Circle())
-                .contentShape(Circle())
+            Text(title)
+                .plFont(.caption, emphasized: true)
+                .lineLimit(1)
+                .foregroundStyle(selected ? Color.white : Color.secondary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 38)
+                .background(selected ? (handsFree ? T.orange : Color.blue) : Color.clear, in: Capsule())
+                .frame(minHeight: T.touch)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(model.handsFree ? "Listening: AUTO" : "Listening: PUSH")
-        .accessibilityHint("Switches between always listening and press to talk")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var quickReplies: some View {

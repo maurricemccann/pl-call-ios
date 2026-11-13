@@ -17,7 +17,7 @@ struct HandbookView: View {
     private let parts: [Part] = [
         Part(title: "The call", entries: [
             Entry(title: "Call and End", body: "Press the round button to call your session on the PC. Talk, stop, and Claude answers out loud. Press it again to end. The call keeps going with the phone locked."),
-            Entry(title: "AUTO and PUSH", body: "The round button at the bottom left. Orange is AUTO: it listens all the time. Blue is PUSH: the mic opens only when you press Talk, in the app or on the Lock Screen. Press it to switch."),
+            Entry(title: "AUTO and PUSH", body: "The switch at the bottom left. AUTO, in orange, listens all the time. PUSH, in blue, opens the mic only when you press Talk, in the app or on the Lock Screen."),
             Entry(title: "Cues", body: "A short tone means Claude is about to talk. \u{201C}Listening\u{201D} means it is your turn. \u{201C}Got it\u{201D} means your words were sent. \u{201C}Line dropped\u{201D} means the PC stopped answering."),
             Entry(title: "While Claude works", body: "The avatar's ring turns in colour and brightens each time Claude does something, and a soft tick plays now and then, so a long turn never feels like silence. The tick can be turned off in Settings."),
             Entry(title: "The pause", body: "Your words are sent after you go quiet. Settings sets how long it waits, from 1 to 4 seconds. Longer lets you stop and think mid-sentence."),
