@@ -34,6 +34,7 @@ import CallKit
     }
 
     var hasCall: Bool { callID != nil }
+    var isBusy: Bool { callID != nil || ringID != nil }   // a call up, or the phone ringing
 
     func startCall() {
         let id = UUID()

@@ -385,8 +385,17 @@ struct Turn: Identifiable, Equatable {
 
     /// In the background with no call: hold the line open so an ask or a waiting session can ring the phone.
     fileprivate func stayReachableIfWanted() {
-        guard stayReachable, hasConfig, !isInCall, UIApplication.shared.applicationState != .active else { return }
+        guard stayReachable, hasConfig, !isInCall, !callKit.isBusy, UIApplication.shared.applicationState != .active else { return }
         keepAlive.start()
+    }
+
+    /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
+    private func ringNow(_ reason: String) async -> String? {
+        keepAlive.stop()
+        AudioSessionManager.deactivate()
+        let refused = await callKit.ring(reason: reason)
+        if refused != nil { stayReachableIfWanted() }
+        return refused
     }
 
     /// After a ring: the system has just released the audio, so wait a moment, then hold the line again.
@@ -412,7 +421,7 @@ struct Turn: Identifiable, Equatable {
             try? await Task.sleep(for: .seconds(Double(minutes) * 60))
             guard !Task.isCancelled, !self.isInCall, self.pendingAsk == nil, self.hasConfig,
                   UIApplication.shared.applicationState != .active else { return }
-            if let refused = await self.callKit.ring(reason: "Claude is waiting") {
+            if let refused = await self.ringNow("Claude is waiting") {
                 self.lastError = "The ring was refused: \(refused)"
             }
         }
@@ -708,7 +717,7 @@ struct Turn: Identifiable, Equatable {
         } else if UIApplication.shared.applicationState != .active {
             let reason = "Claude needs you"
             Task {
-                if let refused = await self.callKit.ring(reason: reason) { self.lastError = "The ring was refused: \(refused)" }
+                if let refused = await self.ringNow(reason) { self.lastError = "The ring was refused: \(refused)" }
             }
         }
     }
@@ -1010,11 +1019,19 @@ struct Turn: Identifiable, Equatable {
 
     private func audioActivated() {
         guard isInCall, config != nil else { return }
+        keepAlive.stop()
         connect()
         let listener = self.listener
         Task {
             do {
-                try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
+                do {
+                    try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
+                } catch {
+                    // the audio can still be settling just after a ring is answered: one more try
+                    try? await Task.sleep(for: .milliseconds(600))
+                    try? AudioSessionManager.configure(music: self.musicMode && !self.callKit.hasCall)
+                    try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
+                }
             } catch {
                 self.finishCall(plainSentence(error))
                 if self.callKit.hasCall { self.callKit.endCall() }
