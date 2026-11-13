@@ -38,6 +38,9 @@ import UIKit
         setup.maximumCallGroups = 1
         setup.maximumCallsPerCallGroup = 1
         setup.includesCallsInRecents = true
+        if UserDefaults.standard.object(forKey: "plcall.customRing") as? Bool ?? true {
+            setup.ringtoneSound = "psyclaupse-ring.wav"   // made in code; Settings switches back to the iPhone's own ring
+        }
         // the system call screen's button back to the app: only the alpha is used, as a white mask
         setup.iconTemplateImageData = UIImage(named: "CallKitIcon")?.pngData()
         provider = CXProvider(configuration: setup)

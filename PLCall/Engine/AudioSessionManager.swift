@@ -5,13 +5,13 @@ import AVFoundation
 enum AudioSessionManager {
     enum Change: Sendable { case interrupted, resumed, routeChanged, engineReset }
 
-    /// `music`: no phone-style call. Other audio keeps playing, headphones stay in full quality (A2DP),
-    /// and the ears are the iPhone's own microphone, because a Bluetooth mic would drop the music to call quality.
+    /// `music`: no phone-style call. Other audio keeps playing, headphones stay in full quality (A2DP).
+    /// `.bluetoothHighQualityRecording` (iOS 26) lets AirPods that support it record in full quality too.
     static func configure(music: Bool = false) throws {
         if music {
             try AVAudioSession.sharedInstance().setCategory(
                 .playAndRecord, mode: .default,
-                options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker])
+                options: [.mixWithOthers, .allowBluetoothA2DP, .bluetoothHighQualityRecording, .defaultToSpeaker])
         } else {
             try AVAudioSession.sharedInstance().setCategory(
                 .playAndRecord, mode: .voiceChat,

@@ -64,6 +64,8 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         content.sound = .default
         content.categoryIdentifier = Self.category
         content.userInfo = ["requestId": requestID, "toolUseId": toolUseID ?? "", "sid": sid ?? ""]
+        content.threadIdentifier = "session." + (sid ?? "psyclaupse")
+        content.relevanceScore = 1
         post(content, identifier: "ask." + requestID)
     }
 
@@ -82,6 +84,8 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         content.sound = .default
         content.categoryIdentifier = Self.questionCategory
         content.userInfo = ["requestId": requestID]
+        content.threadIdentifier = "session.psyclaupse"
+        content.relevanceScore = 1
         post(content, identifier: "ask." + requestID)
     }
 

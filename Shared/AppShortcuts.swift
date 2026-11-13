@@ -14,6 +14,16 @@ struct CallShortcuts: AppShortcutsProvider {
             systemImageName: "phone.fill"
         )
         AppShortcut(
+            intent: WhatDoesClaudeNeedIntent(),
+            phrases: [
+                "What does \(.applicationName) need",
+                "What is \(.applicationName) waiting on",
+                "Check \(.applicationName)"
+            ],
+            shortTitle: "What It Needs",
+            systemImageName: "questionmark.bubble"
+        )
+        AppShortcut(
             intent: EndCallIntent(),
             phrases: [
                 "End the \(.applicationName)",

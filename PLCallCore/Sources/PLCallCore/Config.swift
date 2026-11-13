@@ -33,6 +33,7 @@ public struct PLCallConfig: Codable, Sendable, Equatable {
     public var quickReplies: [QuickReply]?
     public var speech: Speech?
     public var theme: Theme?
+    public var words: [String]?          // names the ears should know (pieces, tools); private, so they live in the config
 
     public enum Problem: Error, Equatable, CustomStringConvertible {
         case unsupportedVersion(Int), baseNotHTTPS, missingCertName, missingCallKey, notJSON(String)

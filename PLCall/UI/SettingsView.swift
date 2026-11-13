@@ -8,6 +8,8 @@ struct SettingsView: View {
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
     @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
+    @AppStorage("plcall.duckLevel") private var duckLevel = 0
+    @AppStorage("plcall.customRing") private var customRing = true
     @State private var contactNote: String?
     @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
@@ -126,6 +128,14 @@ struct SettingsView: View {
                     toggleRow("Edge light", "A glow around the screen while the microphone hears you.", isOn: $edgeLight)
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
+                    Picker(selection: $duckLevel) {
+                        Text("Barely").tag(0)
+                        Text("Some").tag(1)
+                        Text("A lot").tag(2)
+                    } label: {
+                        Text("Lower other audio while on a call")
+                            .plFont(.body)
+                    }
                     toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
                 }
 
@@ -155,6 +165,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    toggleRow("Psyclaupse ringtone", "Its own soft ring. Off uses your iPhone\u{2019}s ringtone. Takes effect the next time the app opens.", isOn: $customRing)
                     Picker(selection: $ringSeconds) {
                         Text("10 seconds").tag(10)
                         Text("15 seconds").tag(15)

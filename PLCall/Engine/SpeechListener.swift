@@ -52,8 +52,9 @@ final class MicTap: @unchecked Sendable {
         // gives the voice-processing I/O unit an output path in the graph
         _ = engine.mainMixerNode
         // Voice processing ducks other audio by default, which would quieten Claude's own voice.
+        let level = UserDefaults.standard.integer(forKey: "plcall.duckLevel")   // 0 barely, 1 some, 2 a lot
         input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-            enableAdvancedDucking: false, duckingLevel: .min)
+            enableAdvancedDucking: level > 0, duckingLevel: level == 2 ? .max : level == 1 ? .mid : .min)
         let source = input.outputFormat(forBus: 0)
         guard source.sampleRate > 0, source.channelCount > 0, let converter = AVAudioConverter(from: source, to: target) else {
             throw PlainError(message: "The microphone is not available.")
@@ -96,6 +97,19 @@ final class MicTap: @unchecked Sendable {
         stop()
         onInput = nil
         onLevel = nil
+    }
+
+    /// Muted at the source (the AirPods press, or the screen). While muted, speech is reported so the app can say so.
+    func setMuted(_ on: Bool, onSpeech: (@Sendable () -> Void)?) {
+        let input = engine.inputNode
+        input.isVoiceProcessingInputMuted = on
+        if on, let onSpeech {
+            _ = input.setMutedSpeechActivityEventListener { event in
+                if event == .started { onSpeech() }
+            }
+        } else {
+            _ = input.setMutedSpeechActivityEventListener(nil)
+        }
     }
 
     /// Closed = buffers are dropped before the analyzer (PUSH mode between presses). The level still reports.
@@ -191,6 +205,13 @@ actor SpeechListener {
     }
 
     /// Call once the audio session is active. Calling it again while running only rebuilds the mic tap.
+    /// Names the ears should recognise (Claude, Psyclaupse, his tools and pieces). Applied when the analyzer starts.
+    private var words: [String] = []
+
+    func setWords(_ list: [String]) {
+        words = Array(list.prefix(100))
+    }
+
     func start(endOfTurn: Double, endOfTurnInterim: Double) async throws {
         self.endOfTurn = endOfTurn
         self.endOfTurnInterim = endOfTurnInterim
@@ -202,7 +223,9 @@ actor SpeechListener {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
             throw PlainError(message: "English is not a supported transcription language here.")
         }
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+        let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [],
+                                            reportingOptions: [.volatileResults, .fastResults],
+                                            attributeOptions: [.audioTimeRange])
         try await mic.prepare(for: transcriber)
         let (inputs, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let fresh = SpeechAnalyzer(modules: [transcriber])
@@ -215,6 +238,11 @@ actor SpeechListener {
         }
         analyzer = fresh
         input = builder
+        if !words.isEmpty {
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = words
+            try? await fresh.setContext(context)   // a hint: if this transcriber ignores it, nothing breaks
+        }
         finalized = ""
         volatile = ""
         consumedThrough = .zero
@@ -258,6 +286,10 @@ actor SpeechListener {
 
     nonisolated func setAccepting(_ on: Bool) {
         mic.setAccepting(on)
+    }
+
+    nonisolated func setMuted(_ on: Bool, onSpeech: (@Sendable () -> Void)?) {
+        mic.setMuted(on, onSpeech: onSpeech)
     }
 
     /// Throws away what was heard so far (Claude's own voice, or a turn that was cut short).

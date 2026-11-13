@@ -1,3 +1,4 @@
+import AppIntents
 import AVFoundation
 import Foundation
 import Observation
@@ -32,6 +33,7 @@ struct Turn: Identifiable, Equatable {
     var handsFree = true
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
+    var isMuted = false                  // his mic is muted (the AirPods press in AUTO, or the screen)
     var stayReachable = true             // no call up: keep the line open in the background so Claude can ring
     var wakeWord = false                 // hands-free: only words after "Claude" are sent
     var speakProgress = true             // short lines Claude writes while it works are spoken too
@@ -191,6 +193,9 @@ struct Turn: Identifiable, Equatable {
             voiceID = config.startingVoice
         }
         UserDefaults.standard.set(config.usesSystemFont, forKey: Keys.systemFont)
+        let words = ["Claude", "Psyclaupse", "Claude Code"] + (config.words ?? [])
+        let listener = self.listener
+        Task { await listener.setWords(words) }
         hasConfig = true
         configError = nil
         lastError = nil
@@ -218,6 +223,7 @@ struct Turn: Identifiable, Equatable {
 
     func startCall() {
         guard hasConfig, !isInCall else { return }
+        Task { _ = try? await IntentDonationManager.shared.donate(intent: StartCallIntent()) }   // Siri learns when he calls
         keepAlive.stop()
         idleRingTask?.cancel()
         isInCall = true
@@ -424,6 +430,32 @@ struct Turn: Identifiable, Equatable {
         case "state": publish()
         default: break
         }
+    }
+
+    /// Mutes his mic like a phone call: nothing he says is sent, and if he talks while muted the call tells him once.
+    func setMuted(_ on: Bool, fromSystem: Bool = false) {
+        guard isInCall, on != isMuted else { return }
+        isMuted = on
+        if !fromSystem { try? AVAudioApplication.shared.setInputMuted(on) }
+        listener.setMuted(on) {
+            Task { @MainActor in CallModel.shared.spokeWhileMuted() }
+        }
+        updateGate()
+        if on {
+            speaker.cue("Muted")
+            set(.idle, "Muted. Press again to unmute")
+        } else {
+            speaker.cue("Unmuted")
+            rest()
+        }
+    }
+
+    @ObservationIgnored private var lastMutedWarning = Date.distantPast
+
+    private func spokeWhileMuted() {
+        guard isMuted, Date().timeIntervalSince(lastMutedWarning) > 10 else { return }
+        lastMutedWarning = Date()
+        speaker.cue("You're muted")
     }
 
     func setSpokenCues(_ on: Bool) {
@@ -695,7 +727,15 @@ struct Turn: Identifiable, Equatable {
             if !self.isInCall { self.head.stop() }
             self.backToReachable()
         }
-        callKit.onMuteToggled = { [weak self] in self?.talk() }
+        // the AirPods press arrives as mute: in PUSH it takes a turn, in AUTO it mutes and unmutes like a phone call
+        callKit.onMuteToggled = { [weak self] in
+            guard let self else { return }
+            if self.handsFree { self.setMuted(!self.isMuted) } else { self.talk() }
+        }
+        _ = NotificationCenter.default.addObserver(forName: AVAudioApplication.inputMuteStateChangeNotification, object: nil, queue: .main) { note in
+            let muted = (note.userInfo?[AVAudioApplication.muteStateKey] as? NSNumber)?.boolValue ?? false
+            Task { @MainActor in CallModel.shared.setMuted(muted, fromSystem: true) }
+        }
         callKit.onHeld = { [weak self] held in self?.heldByOtherCall(held) }
         IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
         IntentBridge.deny = { [weak self] message in self?.answerPermission(allow: false, message: message) }
@@ -1143,7 +1183,7 @@ struct Turn: Identifiable, Equatable {
 
     /// The mic feeds the transcriber only when a turn is wanted: hands-free, one pressed turn, or an answer.
     private func updateGate() {
-        listener.setAccepting(isInCall && (handsFree || armed || pendingAsk != nil))
+        listener.setAccepting(isInCall && !isMuted && (handsFree || armed || pendingAsk != nil))
     }
 
     // MARK: voice
@@ -1356,6 +1396,7 @@ struct Turn: Identifiable, Equatable {
     private func finishCall(_ message: String? = nil) {
         guard isInCall else { return }
         isInCall = false
+        isMuted = false
         armed = false
         earsRetried = false
         armedReply = nil
