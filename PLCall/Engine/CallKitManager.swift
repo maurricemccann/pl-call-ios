@@ -43,6 +43,14 @@ import CallKit
     }
 
     var hasCall: Bool { callID != nil }
+    var isRinging: Bool { ringID != nil }
+
+    /// Picks up the ring from inside the app (a nod), as the green button would.
+    func answerRing() {
+        guard let id = ringID else { return }
+        controller.request(CXTransaction(action: CXAnswerCallAction(call: id))) { @Sendable _ in }
+    }
+
     var isBusy: Bool { callID != nil || ringID != nil }   // a call up, or the phone ringing
 
     func startCall() {

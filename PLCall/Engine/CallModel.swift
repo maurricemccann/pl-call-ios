@@ -414,10 +414,14 @@ struct Turn: Identifiable, Equatable {
     /// While he is on another call (his girlfriend, anyone) it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
         if callKit.otherCallActive { return nil }
+        head.start()   // two nods answer the ring, two shakes decline it
         keepAlive.stop()
         AudioSessionManager.deactivate()
         let refused = await callKit.ring(reason: reason)
-        if refused != nil { stayReachableIfWanted() }
+        if refused != nil {
+            if !(pendingAsk.map { if case .permission = $0 { return true } else { return false } } ?? false) { head.stop() }
+            stayReachableIfWanted()
+        }
         return refused
     }
 
@@ -515,6 +519,12 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    /// A permission keeps the head reader on after the ring: a nod then answers it.
+    private var pendingIsPermission: Bool {
+        if case .permission? = pendingAsk { return true }
+        return false
+    }
+
     private func isQuestion(_ requestID: String?) -> Bool {
         guard let requestID, let ask = pendingAsk, case .question(let waiting, _, _, _) = ask else { return false }
         return waiting == requestID
@@ -534,6 +544,10 @@ struct Turn: Identifiable, Equatable {
 
     /// A nod approves and a shake denies, only while a permission waits.
     func headGesture(_ gesture: HeadGesture) {
+        if callKit.isRinging, !probe.isRingProbe {
+            if gesture == .nod { callKit.answerRing() } else { _ = callKit.endCall() }
+            return
+        }
         if probe.sawHead(gesture) { return }
         guard let ask = pendingAsk, case .permission = ask else { return }
         answerPermission(allow: gesture == .nod, message: nil)
@@ -553,6 +567,7 @@ struct Turn: Identifiable, Equatable {
         callKit.onDeclined = { [weak self] in
             guard let self else { return }
             if !self.probe.sawRing(answered: false) { self.noteMissedRing() }
+            if !self.pendingIsPermission { self.head.stop() }
             self.backToReachable()
         }
         callKit.onMuteToggled = { [weak self] in self?.talk() }
@@ -1147,6 +1162,7 @@ struct Turn: Identifiable, Equatable {
 
     private func ringAnswered() {
         keepAlive.stop()
+        if !pendingIsPermission { head.stop() }
         if probe.sawRing(answered: true) {
             callKit.endCall()
             return
@@ -1456,6 +1472,8 @@ struct Turn: Identifiable, Equatable {
         mark("headMotion", .pass, detail: gesture == .nod ? "A nod was read." : "A shake was read.")
         return true
     }
+
+    var isRingProbe: Bool { isRunning("incomingCall") }
 
     /// True when the ring was the probe's own.
     fileprivate func sawRing(answered: Bool) -> Bool {
