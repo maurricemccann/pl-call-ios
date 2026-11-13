@@ -8,7 +8,10 @@ struct CallFocusFilter: SetFocusFilterIntent {
 
     static let key = "plcall.focusAllowsRings"
 
-    @Parameter(title: "Let Claude ring", default: false)
+    // When the Focus ends, the system runs the filter again with the DEFAULT values, so the default must be the
+    // no-Focus behaviour: rings on. He turns it off inside the Focus he wants quiet. (Build 0.3.25 had false: one
+    // Focus ending silenced every ring after it.)
+    @Parameter(title: "Let Claude ring", default: true)
     var allowRings: Bool
 
     var displayRepresentation: DisplayRepresentation {
