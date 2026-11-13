@@ -27,6 +27,7 @@ struct Turn: Identifiable, Equatable {
     var handsFree = true
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
+    var stayReachable = true             // no call up: keep the line open in the background so Claude can ring
     var wakeWord = false                 // hands-free: only words after "Claude" are sent
     var speakProgress = true             // short lines Claude writes while it works are spoken too
     var shortAnswers = true              // a long answer is said as a few sentences (on-device model), the full text stays on screen
@@ -54,6 +55,8 @@ struct Turn: Identifiable, Equatable {
     private let listener = SpeechListener()
     private let speaker = Speaker()
     private let remote = RemoteCommands()
+    private let keepAlive = KeepAlive()
+    @ObservationIgnored private var idleRingTask: Task<Void, Never>?
     @ObservationIgnored private var config: PLCallConfig?
     @ObservationIgnored private var reducer = EventReducer()
     @ObservationIgnored private var arm = QuickReplyArm()
@@ -97,6 +100,8 @@ struct Turn: Identifiable, Equatable {
         static let music = "plcall.musicMode"
         static let progress = "plcall.speakProgress"
         static let wake = "plcall.wakeWord"
+        static let reach = "plcall.stayReachable"
+        static let idle = "plcall.idleRingMinutes"
         static let short = "plcall.shortAnswers"
     }
 
@@ -106,8 +111,16 @@ struct Turn: Identifiable, Equatable {
         musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
         wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
+        stayReachable = UserDefaults.standard.object(forKey: Keys.reach) as? Bool ?? true
         shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? true
         wire()
+        let center = NotificationCenter.default
+        _ = center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in CallModel.shared.stayReachableIfWanted() }
+        }
+        _ = center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in CallModel.shared.cameToFront() }
+        }
         activity.endStale()
         loading = Task { await self.restore() }
         Task {
@@ -192,6 +205,8 @@ struct Turn: Identifiable, Equatable {
 
     func startCall() {
         guard hasConfig, !isInCall else { return }
+        keepAlive.stop()
+        idleRingTask?.cancel()
         isInCall = true
         lastError = nil
         activity.start(title: Say.title)   // in the same step as the mic: a call started from a control stops recording without it
@@ -356,6 +371,42 @@ struct Turn: Identifiable, Equatable {
     func setSpokenCues(_ on: Bool) {
         spokenCues = on
         UserDefaults.standard.set(on, forKey: Keys.cues)
+    }
+
+    func setStayReachable(_ on: Bool) {
+        stayReachable = on
+        UserDefaults.standard.set(on, forKey: Keys.reach)
+        if !on { keepAlive.stop() }
+    }
+
+    /// Minutes after Claude's turn ends before the phone rings, when no call is up and he has not answered. 0 = never.
+    private var idleRingMinutes: Int { UserDefaults.standard.object(forKey: Keys.idle) as? Int ?? 10 }
+
+    /// In the background with no call: hold the line open so an ask or a waiting session can ring the phone.
+    fileprivate func stayReachableIfWanted() {
+        guard stayReachable, hasConfig, !isInCall, UIApplication.shared.applicationState != .active else { return }
+        keepAlive.start()
+    }
+
+    fileprivate func cameToFront() {
+        keepAlive.stop()
+        idleRingTask?.cancel()   // he is looking at it
+    }
+
+    /// The session moved while no call is up. A turn that ended starts the wait for the "Claude is waiting" ring;
+    /// anything newer starts it again, so a session he is driving at the PC never rings.
+    private func sessionMoved(turnEnded: Bool) {
+        idleRingTask?.cancel()
+        let minutes = idleRingMinutes
+        guard turnEnded, minutes > 0 else { return }
+        idleRingTask = Task {
+            try? await Task.sleep(for: .seconds(Double(minutes) * 60))
+            guard !Task.isCancelled, !self.isInCall, self.pendingAsk == nil, self.hasConfig,
+                  UIApplication.shared.applicationState != .active else { return }
+            if let refused = await self.callKit.ring(reason: "Claude is waiting for you") {
+                self.lastError = "The ring was refused: \(refused)"
+            }
+        }
     }
 
     func setWakeWord(_ on: Bool) {
@@ -523,6 +574,7 @@ struct Turn: Identifiable, Equatable {
         let before = reducer.lastSeq
         let outputs = reducer.ingest(event)
         guard reducer.lastSeq != before else { return }
+        if !isInCall { sessionMoved(turnEnded: event.type == "result" || event.isTurnEnd == true) }
         if outputs.isEmpty, let ask = pendingAsk, event.type != "control_request", event.isBlockingControl != true {
             // The session moved on: the ask was answered on the PC or another screen.
             resolve(ask)
@@ -946,7 +998,10 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func audioChanged(_ change: AudioSessionManager.Change) {
-        guard isInCall else { return }
+        guard isInCall else {
+            if change == .resumed { keepAlive.resume() }
+            return
+        }
         let listener = self.listener
         switch change {
         case .interrupted:
@@ -969,6 +1024,7 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func ringAnswered() {
+        keepAlive.stop()
         if probe.sawRing(answered: true) {
             callKit.endCall()
             return
@@ -1002,6 +1058,7 @@ struct Turn: Identifiable, Equatable {
         Task {
             await listener.stop()
             if releaseAudio { AudioSessionManager.deactivate() }
+            self.stayReachableIfWanted()
         }
         note("Call ended.")
         if let message { lastError = message }

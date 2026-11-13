@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmForget = false
     @AppStorage("plcall.edgeLight") private var edgeLight = false
+    @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
     @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
     @AppStorage(VoiceTuning.pitchKey) private var voicePitch = VoiceTuning.defaultPitch
@@ -30,6 +31,10 @@ struct SettingsView: View {
 
     private var cues: Binding<Bool> {
         Binding(get: { model.spokenCues }, set: { model.setSpokenCues($0) })
+    }
+
+    private var reach: Binding<Bool> {
+        Binding(get: { model.stayReachable }, set: { model.setStayReachable($0) })
     }
 
     private var wake: Binding<Bool> {
@@ -101,6 +106,26 @@ struct SettingsView: View {
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
                     toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
+                }
+
+                Section {
+                    toggleRow("Stay reachable", "With no call up, Call keeps a quiet line open in the background, so Claude can ring you for an approval or a question. Uses some battery.", isOn: reach)
+                    Picker(selection: $idleMinutes) {
+                        Text("Never").tag(0)
+                        Text("After 5 minutes").tag(5)
+                        Text("After 10 minutes").tag(10)
+                        Text("After 20 minutes").tag(20)
+                        Text("After 30 minutes").tag(30)
+                    } label: {
+                        Text("Ring when Claude is waiting")
+                            .plFont(.body)
+                    }
+                } header: {
+                    Text("When you are not on a call")
+                        .plFont(.footnote)
+                } footer: {
+                    Text("Claude rings at once for an approval or a question. When it has finished and waits for you, it rings once after the time you pick, unless the session moves on.")
+                        .plFont(.footnote)
                 }
 
                 Section {
