@@ -15,6 +15,8 @@
 	<string>Call reads a nod or a shake of your head from your AirPods, so you can answer without your hands.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Call adds one card named Claude, so calls with Claude show his name and picture in Recents. It reads nothing else.</string>
+	<key>NSPersonalVoiceUsageDescription</key>
+	<string>When you pick My Personal Voice, Psyclaupse speaks in it. It stays on this iPhone.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Call asks for Face ID when it opens, because it controls a live session.</string>
 	<key>NSUserActivityTypes</key>

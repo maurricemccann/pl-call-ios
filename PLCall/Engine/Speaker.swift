@@ -22,6 +22,7 @@ enum VoiceTuning {
 /// fetched piece by piece. A PC voice that fails says NOTHING: no other voice ever stands in for it.
 @MainActor final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
     static let phone = "phone"
+    static let personal = "personal"   // his own iOS Personal Voice, only when he picks it (his ruling, S348)
 
     var onFinished: (() -> Void)?
     var onFailed: ((String) -> Void)?
@@ -50,8 +51,17 @@ enum VoiceTuning {
         if tone { playTone() }
         let sentences = SpokenText.make(text).sentences
         speakingText = sentences.joined(separator: " ")
-        if voiceID == Self.phone {
-            let voice = Self.bestVoice()
+        if voiceID == Self.phone || voiceID == Self.personal {
+            let voice: AVSpeechSynthesisVoice?
+            if voiceID == Self.personal {
+                guard let mine = Self.personalVoice() else {
+                    fail("Your Personal Voice is not available: allow it for Psyclaupse in Settings. Nothing is spoken in its place.")
+                    return
+                }
+                voice = mine
+            } else {
+                voice = Self.bestVoice()
+            }
             for sentence in sentences {
                 let utterance = AVSpeechUtterance(string: sentence)
                 utterance.voice = voice
@@ -167,6 +177,18 @@ enum VoiceTuning {
         player?.stop()
         player = nil
         speakingText = ""
+    }
+
+    /// His Personal Voice, when he has made one and allowed this app to use it.
+    static func personalVoice() -> AVSpeechSynthesisVoice? {
+        guard AVSpeechSynthesizer.personalVoiceAuthorizationStatus == .authorized else { return nil }
+        return AVSpeechSynthesisVoice.speechVoices().first { $0.voiceTraits.contains(.isPersonalVoice) }
+    }
+
+    /// Asks once for his Personal Voice. True when it may be used.
+    static func allowPersonalVoice() async -> Bool {
+        let status = await AVSpeechSynthesizer.requestPersonalVoiceAuthorization()
+        return status == .authorized
     }
 
     /// The best installed English voice, never a novelty voice and never a personal voice.

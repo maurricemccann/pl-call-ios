@@ -181,7 +181,7 @@ struct Turn: Identifiable, Equatable {
     private func apply(_ config: PLCallConfig) {
         self.config = config
         line = LineClient(config: config)
-        voices = config.voiceList
+        voices = config.voiceList + [PLCallConfig.Voice(id: Speaker.personal, label: "My Personal Voice")]
         quickReplies = config.quickReplyList
         if let saved = UserDefaults.standard.string(forKey: Keys.voice), voices.contains(where: { $0.id == saved }) {
             voiceID = saved
@@ -374,6 +374,17 @@ struct Turn: Identifiable, Equatable {
 
     func selectVoice(_ id: String) {
         guard voices.contains(where: { $0.id == id }) else { return }
+        if id == Speaker.personal, Speaker.personalVoice() == nil {
+            Task {
+                if await Speaker.allowPersonalVoice(), Speaker.personalVoice() != nil {
+                    self.voiceID = id
+                    UserDefaults.standard.set(id, forKey: Keys.voice)
+                } else {
+                    self.lastError = "Personal Voice is not allowed or not set up. Settings > Accessibility > Personal Voice, then allow Psyclaupse."
+                }
+            }
+            return
+        }
         voiceID = id
         UserDefaults.standard.set(id, forKey: Keys.voice)
     }
