@@ -74,6 +74,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var awakeUntil = Date.distantPast   // wake word mode: no name needed until then
     @ObservationIgnored private var lastSpoke = Date.distantPast    // when the voice last stopped
     @ObservationIgnored private var lastHearingPublish = Date.distantPast
+    @ObservationIgnored private var spokenAsk: String?       // the ask already read out, so it is not read again
     @ObservationIgnored private var lockLine = ""            // the last thing said by either side, for the Lock Screen
     @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
 
@@ -411,7 +412,7 @@ struct Turn: Identifiable, Equatable {
             try? await Task.sleep(for: .seconds(Double(minutes) * 60))
             guard !Task.isCancelled, !self.isInCall, self.pendingAsk == nil, self.hasConfig,
                   UIApplication.shared.applicationState != .active else { return }
-            if let refused = await self.callKit.ring(reason: "Claude is waiting for you") {
+            if let refused = await self.callKit.ring(reason: "Claude is waiting") {
                 self.lastError = "The ring was refused: \(refused)"
             }
         }
@@ -702,9 +703,10 @@ struct Turn: Identifiable, Equatable {
         statusLine = Say.waiting
         publish(alert: true)
         if isInCall {
+            spokenAsk = Self.id(of: ask)
             speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: spokenCues)
         } else if UIApplication.shared.applicationState != .active {
-            let reason = askText ?? Say.title
+            let reason = "Claude needs you"
             Task {
                 if let refused = await self.callKit.ring(reason: reason) { self.lastError = "The ring was refused: \(refused)" }
             }
@@ -721,8 +723,16 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    private static func id(of ask: Ask) -> String {
+        switch ask {
+        case .permission(let requestID, _, _, _): return requestID
+        case .question(let requestID, _, _, _): return requestID
+        }
+    }
+
     /// The ask is settled, here or anywhere else: take it off every surface at once.
     private func resolve(_ ask: Ask) {
+        spokenAsk = nil
         switch ask {
         case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
         case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
@@ -810,9 +820,10 @@ struct Turn: Identifiable, Equatable {
                 if spokenCues, awaitingReply, pendingAsk == nil, !speaker.isSpeaking { speaker.cue("Got it") }
                 return
             }
-            guard let answer = permissionAnswer(text) else { return }
-            speaker.stop()   // a clear approve or deny said over the prompt counts, and the voice stops
-            took(answer)
+            if let answer = permissionAnswer(text) ?? questionAnswer(text) {
+                speaker.stop()   // a clear answer said over the prompt counts, and the voice stops
+                took(answer)
+            }
         case .failed(let message):
             lastError = message
             set(.lost, message)
@@ -878,6 +889,23 @@ struct Turn: Identifiable, Equatable {
         let own = heard.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init).filter { !spoken.contains($0) }
         let words = own.joined(separator: " ")
         return SpokenAnswer.decision(words) != nil ? words : nil
+    }
+
+    /// His words minus the words the voice is saying, when a question waits and they name one of its options.
+    /// Only names count here, never numbers: the spoken "Option 2" can come back from the mic as "two".
+    private func questionAnswer(_ heard: String) -> String? {
+        guard let ask = pendingAsk, case .question(_, _, let question, _) = ask else { return nil }
+        let spoken = Set(speaker.speakingText.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
+        let own = heard.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init).filter { !spoken.contains($0) }
+        let words = own.joined(separator: " ")
+        guard !words.isEmpty else { return nil }
+        // the option whose name shares a word with what he said (option names are in the spoken text, so match on his own words)
+        let said = Set(heard.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
+        let hits = question.options.filter { option in
+            let name = Set(option.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
+            return !name.isDisjoint(with: said) && heard.lowercased().contains(option.lowercased())
+        }
+        return hits.count == 1 ? hits[0] : nil
     }
 
     /// Echo cancellation is not proven on this path, so the voice's own words coming back through the mic are not a barge-in:
@@ -999,7 +1027,10 @@ struct Turn: Identifiable, Equatable {
             self.callKit.reportConnected()
             guard self.state == .connecting || self.state == .lost else { return }
             self.rest()
-            if let ask = self.pendingAsk { self.speaker.speak(self.spokenLine(for: ask), voiceID: self.voiceID, line: self.line) }
+            if let ask = self.pendingAsk, self.spokenAsk != Self.id(of: ask) {
+                self.spokenAsk = Self.id(of: ask)
+                self.speaker.speak(self.spokenLine(for: ask), voiceID: self.voiceID, line: self.line, tone: self.spokenCues)
+            }
         }
     }
 
