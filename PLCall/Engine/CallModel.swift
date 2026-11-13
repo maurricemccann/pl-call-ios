@@ -1211,6 +1211,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             self.callKit.reportConnected()
+            self.matchProximityToRoute()
             if self.state == .connecting { self.speaker.chime(.connected) }
             guard self.state == .connecting || self.state == .lost else { return }
             self.rest()
@@ -1230,7 +1231,14 @@ struct Turn: Identifiable, Equatable {
         set(.lost, "The call's audio was taken by something else.")
     }
 
+    /// Held to the ear on the earpiece: the proximity sensor darkens the screen, as in a phone call. Off on speaker and AirPods.
+    private func matchProximityToRoute() {
+        let earpiece = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInReceiver }
+        UIDevice.current.isProximityMonitoringEnabled = isInCall && earpiece
+    }
+
     private func audioChanged(_ change: AudioSessionManager.Change) {
+        if change == .routeChanged || change == .engineReset { matchProximityToRoute() }
         guard isInCall else {
             if change == .resumed { keepAlive.resume() }
             return
@@ -1288,6 +1296,7 @@ struct Turn: Identifiable, Equatable {
         micLevel = 0
         speaker.stop()
         speaker.chime(.ended)
+        UIDevice.current.isProximityMonitoringEnabled = false
         remote.disable()
         let listener = self.listener
         let releaseAudio = ownsAudio

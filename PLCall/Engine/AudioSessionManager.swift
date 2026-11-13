@@ -42,7 +42,9 @@ enum AudioSessionManager {
         _ = center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { note in
             let raw = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
             let reason = AVAudioSession.RouteChangeReason(rawValue: raw)
-            if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable { handler(.routeChanged) }   // AirPods in or out
+            if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .override || reason == .routeConfigurationChange {
+                handler(.routeChanged)   // AirPods in or out, or the audio picker moved the sound
+            }
         }
         _ = center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { _ in
             handler(.engineReset)

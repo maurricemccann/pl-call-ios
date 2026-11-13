@@ -23,6 +23,7 @@ struct CallScreen: View {
     @State private var approveTick = 0
     @State private var denyTick = 0
     @State private var errorTick = 0
+    @State private var turnTick = 0
 
     // explicit: a view with private state must not depend on the synthesized initializer staying internal
     init(model: CallModel) { self.model = model }
@@ -49,8 +50,9 @@ struct CallScreen: View {
                 panel = nil
             }
         }
-        .onChange(of: model.state) { _, new in
+        .onChange(of: model.state) { old, new in
             AccessibilityNotification.Announcement(new.plLabel).post()
+            if new == .listening, old == .speaking || old == .working { turnTick += 1 }   // a light tap: his turn
         }
         .onChange(of: model.lastError) { _, new in
             if let new {
@@ -59,6 +61,7 @@ struct CallScreen: View {
             }
         }
         .sensoryFeedback(PLHaptic.select, trigger: selectTick)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: turnTick)
         .sensoryFeedback(PLHaptic.connect, trigger: connectTick)
         .sensoryFeedback(PLHaptic.end, trigger: endTick)
         .sensoryFeedback(PLHaptic.approve, trigger: approveTick)
@@ -159,7 +162,7 @@ struct CallScreen: View {
                     panel = .settings
                 } label: {
                     VStack(spacing: 4) {
-                        ClaudeAvatar(ring: ringColor)
+                        ClaudeAvatar(ring: ringColor, speaking: model.state == .speaking && !reduceMotion)
                         HStack(spacing: 6) {
                             StateDot(state: model.state)
                             Text("Claude").plHand(17, relativeTo: .headline)
@@ -205,6 +208,7 @@ struct CallScreen: View {
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
+                            audioButton
                             pictureButton
                             talkButton
                             callButton
@@ -214,6 +218,7 @@ struct CallScreen: View {
                     HStack(spacing: T.gap) {
                         modeSwitch
                         quickReplies
+                        audioButton
                         pictureButton
                         talkButton
                         callButton
@@ -322,6 +327,16 @@ struct CallScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(armed ? "\(reply.label). Press again to send" : reply.label)
+    }
+
+    /// Speaker, the iPhone's earpiece or AirPods, during a call.
+    @ViewBuilder
+    private var audioButton: some View {
+        if model.isInCall {
+            AudioRouteButton()
+                .frame(width: T.touch, height: T.touch)
+                .glassControl(in: Circle())
+        }
     }
 
     /// A picture or a screenshot from Photos, sent to Claude.

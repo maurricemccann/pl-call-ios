@@ -38,9 +38,19 @@ struct StateDot: View {
 /// Claude's avatar: a coral burst on a dark disc, inside a presence ring.
 struct ClaudeAvatar: View {
     let ring: Color
+    var speaking = false
     var size: CGFloat = 46
 
     var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !speaking)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            // two slow waves together read as speech, not a metronome
+            let swell = speaking ? 1 + 0.045 * (sin(t * 7.1) * 0.6 + sin(t * 11.3) * 0.4) : 1
+            face.scaleEffect(swell)
+        }
+    }
+
+    private var face: some View {
         ZStack {
             Circle().fill(Color(uiColor: .secondarySystemBackground))
             ForEach(0..<6, id: \.self) { ray in

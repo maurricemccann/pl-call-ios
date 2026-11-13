@@ -67,6 +67,7 @@ struct TranscriptView: View {
                     }
                     ForEach(rows) { row in
                         rowView(row)
+                            .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                     }
                     if model.isClaudeTyping {
                         TypingBubble()
@@ -81,6 +82,7 @@ struct TranscriptView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: model.turns.count)
             .onChange(of: model.turns.count) { _, _ in scrollToNewest(proxy) }
             .onChange(of: model.turns.last?.text) { _, _ in scrollToNewest(proxy) }
             .onChange(of: model.isClaudeTyping) { _, _ in scrollToNewest(proxy) }
