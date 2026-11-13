@@ -14,6 +14,7 @@ struct CallScreen: View {
     }
 
     @State private var panel: Panel? = nil
+    @AppStorage("plcall.edgeLight") private var edgeLight = false
     @State private var selectTick = 0
     @State private var connectTick = 0
     @State private var endTick = 0
@@ -87,7 +88,7 @@ struct CallScreen: View {
 
     /// The glow shows only while the mic is open, and never with Reduce Motion.
     private var showsEdgeLight: Bool {
-        if reduceMotion { return false }
+        if reduceMotion || !edgeLight { return false }
         return model.state == .listening || model.state == .hearing
     }
 

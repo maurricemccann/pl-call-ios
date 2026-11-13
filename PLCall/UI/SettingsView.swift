@@ -5,6 +5,8 @@ struct SettingsView: View {
     let model: CallModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmForget = false
+    @AppStorage("plcall.edgeLight") private var edgeLight = false
+    @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
     @AppStorage(VoiceTuning.pitchKey) private var voicePitch = VoiceTuning.defaultPitch
 
@@ -18,7 +20,8 @@ struct SettingsView: View {
 
     private var version: String {
         let value = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        return value ?? "1"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        return (value ?? "1") + " (" + (build ?? "?") + ")"
     }
 
     private var handsFree: Binding<Bool> {
@@ -79,6 +82,17 @@ struct SettingsView: View {
 
                 Section {
                     toggleRow("Cues", "A tone before Claude talks, \u{201C}Listening\u{201D} when it is your turn, \u{201C}Got it\u{201D} when your words are sent.", isOn: cues)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Pause before your words are sent: \(pause, specifier: "%.1f") s")
+                            .plFont(.body)
+                        Slider(value: $pause, in: VoiceTuning.pauseRange, step: 0.1) {
+                            Text("Pause before your words are sent")
+                        }
+                        Text("Longer lets you stop and think mid-sentence. Starts with the next call.")
+                            .plFont(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    toggleRow("Edge light", "A glow around the screen while the microphone hears you.", isOn: $edgeLight)
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
                     toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)

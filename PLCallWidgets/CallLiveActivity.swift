@@ -81,13 +81,15 @@ struct CallActivityView: View {
                     .font(WidgetStyle.text(18, .headline, strong: true))
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                EndButton(compact: false, tinted: !hasAsk)
+                if !hasAsk, content.push == true {
+                    TalkButton()
+                        .fixedSize()
+                }
+                EndButton(compact: false, tinted: false)
             }
             DetailLine(content: content, lines: 2)
             if hasAsk {
                 AnswerRow()
-            } else if content.push == true {
-                TalkButton()
             }
         }
         .padding(14)
@@ -184,8 +186,7 @@ struct TalkButton: View {
     var body: some View {
         Button(intent: TalkIntent()) {
             Label("Talk", systemImage: "mic.fill")
-                .font(WidgetStyle.text(16, .headline, strong: true))
-                .frame(maxWidth: .infinity, minHeight: 32)
+                .font(WidgetStyle.text(14, .footnote, strong: true))
         }
         .buttonStyle(.borderedProminent)
         .tint(WidgetStyle.accent)

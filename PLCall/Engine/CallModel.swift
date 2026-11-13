@@ -838,12 +838,12 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func audioActivated() {
-        guard isInCall, let config else { return }
+        guard isInCall, config != nil else { return }
         connect()
         let listener = self.listener
         Task {
             do {
-                try await listener.start(endOfTurn: config.endOfTurn, endOfTurnInterim: config.endOfTurnInterim)
+                try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
             } catch {
                 self.finishCall(plainSentence(error))
                 if self.callKit.hasCall { self.callKit.endCall() }

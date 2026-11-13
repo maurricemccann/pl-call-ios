@@ -317,7 +317,23 @@ actor SpeechListener {
     private static func join(_ a: String, _ b: String) -> String {
         if a.isEmpty { return b }
         if b.isEmpty { return a }
-        return a + " " + b
+        let first = a.split(separator: " ")
+        let second = b.split(separator: " ")
+        var overlap = 0
+        var size = min(first.count, second.count)
+        while size >= 2 {
+            if zip(first.suffix(size), second.prefix(size)).allSatisfy({ bare($0) == bare($1) }) {
+                overlap = size
+                break
+            }
+            size -= 1
+        }
+        if overlap == second.count { return a }
+        return a + " " + second.dropFirst(overlap).joined(separator: " ")
+    }
+
+    private static func bare(_ word: Substring) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
     private static func words(_ error: any Error) -> String {

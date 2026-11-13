@@ -10,6 +10,12 @@ enum VoiceTuning {
     static let defaultPitch = 0.97
     static var rate: Double { (UserDefaults.standard.object(forKey: rateKey) as? Double) ?? defaultRate }
     static var pitch: Double { (UserDefaults.standard.object(forKey: pitchKey) as? Double) ?? defaultPitch }
+
+    /// How long a silence ends his turn. Build 6 used 0.9 s and cut him off mid-thought (his test, 11-12).
+    static let pauseKey = "plcall.turnPause"
+    static let pauseRange: ClosedRange<Double> = 1.0...4.0
+    static let defaultPause = 2.0
+    static var pause: Double { (UserDefaults.standard.object(forKey: pauseKey) as? Double) ?? defaultPause }
 }
 
 /// Claude's voice. "phone" speaks on the iPhone, sentence by sentence with no gap. Any other id is a PC voice,
