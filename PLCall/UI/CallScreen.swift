@@ -265,6 +265,7 @@ struct CallScreen: View {
         }
         .padding(.horizontal, 3)
         .glassEffect(.regular.interactive(), in: Capsule())
+        .fixedSize()   // never squeezed: the quick replies take what is left (his 8:22 PM screenshot showed "A UT O")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Listening mode")
     }
@@ -281,6 +282,7 @@ struct CallScreen: View {
         } label: {
             Text(title)
                 .plFont(.caption, emphasized: true)
+                .lineLimit(1)
                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                 .padding(.horizontal, 10)
                 .frame(minHeight: 38)
