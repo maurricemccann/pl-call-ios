@@ -259,6 +259,10 @@ struct Turn: Identifiable, Equatable {
 
     /// PUSH mode, the headset press and the Talk button: stop the voice and take one turn.
     func talk() {
+        if callKit.isRinging {
+            callKit.answerRing()
+            return
+        }
         guard isInCall else {
             startCall()
             return
@@ -277,6 +281,10 @@ struct Turn: Identifiable, Equatable {
     }
 
     func replay() {
+        if callKit.isRinging {
+            _ = callKit.endCall()
+            return
+        }
         let last = reducer.lastSaid
         guard !last.isEmpty else {
             statusLine = "Nothing to replay yet."
@@ -489,6 +497,7 @@ struct Turn: Identifiable, Equatable {
             return nil
         }
         head.start()   // two nods answer the ring, two shakes decline it
+        remote.enable()   // the AirPods stem: one press answers, two decline
         keepAlive.stop()
         AudioSessionManager.deactivate()
         let refused = await callKit.ring(reason: reason)
@@ -642,6 +651,7 @@ struct Turn: Identifiable, Equatable {
         callKit.onDeclined = { [weak self] in
             guard let self else { return }
             RingLog.note("ring ended without an answer")
+            if !self.isInCall { self.remote.disable() }
             if !self.probe.sawRing(answered: false) { self.noteMissedRing() }
             if !self.pendingIsPermission { self.head.stop() }
             self.backToReachable()
@@ -893,6 +903,10 @@ struct Turn: Identifiable, Equatable {
     /// The ask is settled, here or anywhere else: take it off every surface at once.
     private func resolve(_ ask: Ask) {
         spokenAsk = nil
+        if callKit.isRinging {
+            RingLog.note("ring stopped: answered somewhere else")
+            _ = callKit.endCall()
+        }
         switch ask {
         case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
         case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
