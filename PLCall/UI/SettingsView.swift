@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var confirmForget = false
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
+    @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
     @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
     @AppStorage(VoiceTuning.pitchKey) private var voicePitch = VoiceTuning.defaultPitch
@@ -142,6 +143,16 @@ struct SettingsView: View {
 
                 Section {
                     toggleRow("Stay reachable", "With no call up, Call keeps a quiet line open in the background, so Claude can ring you for an approval or a question. Uses some battery.", isOn: reach)
+                    Picker(selection: $ringSeconds) {
+                        Text("10 seconds").tag(10)
+                        Text("15 seconds").tag(15)
+                        Text("20 seconds").tag(20)
+                        Text("30 seconds").tag(30)
+                        Text("45 seconds").tag(45)
+                    } label: {
+                        Text("Ring for")
+                            .plFont(.body)
+                    }
                     Picker(selection: $idleMinutes) {
                         Text("Never").tag(0)
                         Text("After 5 minutes").tag(5)
@@ -156,7 +167,7 @@ struct SettingsView: View {
                     Text("When you are not on a call")
                         .plFont(.footnote)
                 } footer: {
-                    Text("Claude rings at once for an approval or a question. When it has finished and waits for you, it rings once after the time you pick, unless the session moves on.")
+                    Text("Claude rings at once for an approval or a question. A ring you leave stops after the time you pick and becomes a missed call. When Claude has finished and waits for you, it rings once after the wait you pick. To silence rings during a Focus, add Call in Settings > Focus > Focus Filters.")
                         .plFont(.footnote)
                 }
 

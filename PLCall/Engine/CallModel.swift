@@ -443,7 +443,7 @@ struct Turn: Identifiable, Equatable {
     /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
     /// While he is on another call (his girlfriend, anyone) it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
-        if callKit.otherCallActive { return nil }
+        if callKit.otherCallActive || !CallFocusFilter.ringsAllowed { return nil }
         head.start()   // two nods answer the ring, two shakes decline it
         keepAlive.stop()
         AudioSessionManager.deactivate()

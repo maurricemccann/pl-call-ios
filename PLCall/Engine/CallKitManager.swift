@@ -105,10 +105,11 @@ import UIKit
         }
         if refused != nil, ringID == id { ringID = nil }
         if refused == nil {
-            // Like a real call: a ring nobody picks up stops after 30 seconds and becomes a missed call.
+            // Like a real call: a ring nobody picks up stops (15 s unless he chose otherwise) and becomes a missed call.
             // (On a locked iPhone the system screen has no Decline button, and two side presses do not always decline.)
             Task {
-                try? await Task.sleep(for: .seconds(30))
+                let seconds = UserDefaults.standard.object(forKey: "plcall.ringSeconds") as? Int ?? 15
+                try? await Task.sleep(for: .seconds(seconds))
                 guard self.ringID == id else { return }
                 self.provider.reportCall(with: id, endedAt: nil, reason: .unanswered)
                 self.ended(id)
