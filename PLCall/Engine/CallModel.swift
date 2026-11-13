@@ -456,6 +456,18 @@ struct Turn: Identifiable, Equatable {
             probe.sawNotification(action: action, text: text)
             return
         }
+        if action.hasPrefix(NotificationHub.optionPrefix) || (action == NotificationHub.replyID && isQuestion(requestID)) {
+            _ = await loading?.value
+            guard let ask = pendingAsk, case .question(let waiting, _, _, _) = ask, waiting == requestID else { return }
+            if let index = Int(action.dropFirst(NotificationHub.optionPrefix.count)), action.hasPrefix(NotificationHub.optionPrefix) {
+                answerQuestion(option: index)
+            } else if let words = text?.trimmingCharacters(in: .whitespacesAndNewlines), !words.isEmpty {
+                resolve(ask)
+                append(.me, words)
+                deliver(words)
+            }
+            return
+        }
         let allow: Bool
         switch action {
         case NotificationHub.approveID: allow = true
@@ -480,6 +492,23 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    private func isQuestion(_ requestID: String?) -> Bool {
+        guard let requestID, let ask = pendingAsk, case .question(let waiting, _, _, _) = ask else { return false }
+        return waiting == requestID
+    }
+
+    /// A ring that was declined or not picked up leaves a "Missed call" notice with the ask's buttons, like a real missed call.
+    private func noteMissedRing() {
+        switch pendingAsk {
+        case .permission(let requestID, let toolUseID, let forWhat, _)?:
+            NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, missed: true)
+        case .question(let requestID, _, let question, _)?:
+            NotificationHub.shared.postQuestion(requestID: requestID, body: question.question, options: question.options, missed: true)
+        case nil:
+            break
+        }
+    }
+
     /// A nod approves and a shake denies, only while a permission waits.
     func headGesture(_ gesture: HeadGesture) {
         if probe.sawHead(gesture) { return }
@@ -500,7 +529,7 @@ struct Turn: Identifiable, Equatable {
         callKit.onAnswered = { [weak self] in self?.ringAnswered() }
         callKit.onDeclined = { [weak self] in
             guard let self else { return }
-            _ = self.probe.sawRing(answered: false)
+            if !self.probe.sawRing(answered: false) { self.noteMissedRing() }
             self.backToReachable()
         }
         callKit.onMuteToggled = { [weak self] in self?.talk() }
@@ -705,7 +734,7 @@ struct Turn: Identifiable, Equatable {
             head.start()
         case .question(let requestID, _, let question, _):
             append(.claude, spokenLine(for: ask))
-            NotificationHub.shared.postQuestion(requestID: requestID, body: question.question)
+            NotificationHub.shared.postQuestion(requestID: requestID, body: question.question, options: question.options)
         }
         updateGate()
         state = .waitingApproval

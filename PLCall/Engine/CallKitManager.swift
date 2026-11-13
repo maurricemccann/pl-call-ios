@@ -27,7 +27,7 @@ import CallKit
         setup.supportedHandleTypes = [.generic]
         setup.maximumCallGroups = 1
         setup.maximumCallsPerCallGroup = 1
-        setup.includesCallsInRecents = false
+        setup.includesCallsInRecents = true
         provider = CXProvider(configuration: setup)
         super.init()
         provider.setDelegate(self, queue: .main)

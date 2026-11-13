@@ -11,6 +11,11 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
     static let denyID = "ask.deny"
     static let replyID = "ask.reply"
     static let probePrefix = "probe."
+    static let questionCategory = "ask.question"
+    static let optionPrefix = "ask.opt."   // + the option's index
+
+    private let lock = NSLock()
+    private var questionActions: [UNNotificationAction] = []   // the last question's buttons, kept when the categories are set again
 
     /// Called from the app's init: the delegate and categories must exist before launch ends,
     /// and waking the model here sets the intent hooks even when no screen is ever shown.
@@ -22,13 +27,25 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
     func register() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        setCategories()
+    }
+
+    private func setCategories() {
+        let center = UNUserNotificationCenter.current()
         let approve = UNNotificationAction(identifier: Self.approveID, title: "Approve", options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: Self.denyID, title: "Deny", options: [.destructive])
         // A reply can approve ("yes, go ahead"), so it needs the same unlock as Approve.
         let reply = UNTextInputNotificationAction(identifier: Self.replyID, title: "Reply", options: [.authenticationRequired],
                                                   textInputButtonTitle: "Send", textInputPlaceholder: "A short message")
+        lock.lock()
+        let options = questionActions
+        lock.unlock()
+        // A question's reply is not an answer to it: it goes to the session as a message.
+        let say = UNTextInputNotificationAction(identifier: Self.replyID, title: "Reply", options: [],
+                                                textInputButtonTitle: "Send", textInputPlaceholder: "Say something else")
         center.setNotificationCategories([
-            UNNotificationCategory(identifier: Self.category, actions: [approve, deny, reply], intentIdentifiers: [], options: [])
+            UNNotificationCategory(identifier: Self.category, actions: [approve, deny, reply], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: Self.questionCategory, actions: options + [say], intentIdentifiers: [], options: [])
         ])
     }
 
@@ -40,9 +57,9 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         }
     }
 
-    func postPermission(requestID: String, toolUseID: String?, body: String) {
+    func postPermission(requestID: String, toolUseID: String?, body: String, missed: Bool = false) {
         let content = UNMutableNotificationContent()
-        content.title = "Claude needs your answer"
+        content.title = missed ? "Missed call from Claude" : "Claude needs your answer"
         content.body = body
         content.sound = .default
         content.categoryIdentifier = Self.category
@@ -50,12 +67,21 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         post(content, identifier: "ask." + requestID)
     }
 
-    /// A question has options, which a notification cannot hold: it only says one is waiting.
-    func postQuestion(requestID: String, body: String) {
+    /// A question with its options as buttons (up to four), so it can be answered from the Lock Screen or the watch.
+    func postQuestion(requestID: String, body: String, options: [String], missed: Bool = false) {
+        let buttons = options.prefix(4).enumerated().map { index, name in
+            UNNotificationAction(identifier: Self.optionPrefix + String(index), title: String(name.prefix(40)), options: [])
+        }
+        lock.lock()
+        questionActions = Array(buttons)
+        lock.unlock()
+        setCategories()
         let content = UNMutableNotificationContent()
-        content.title = "Claude has a question"
+        content.title = missed ? "Missed call from Claude" : "Claude has a question"
         content.body = body
         content.sound = .default
+        content.categoryIdentifier = Self.questionCategory
+        content.userInfo = ["requestId": requestID]
         post(content, identifier: "ask." + requestID)
     }
 
