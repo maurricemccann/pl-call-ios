@@ -8,7 +8,7 @@ struct SettingsView: View {
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
     @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
-    @AppStorage("plcall.duckLevel") private var duckLevel = 0
+    @AppStorage("plcall.duckLevel") private var duckLevel = 2
     @AppStorage("plcall.customRing") private var customRing = true
     @AppStorage("plcall.useSpokenContent") private var useSpokenContent = false
     @State private var contactNote: String?

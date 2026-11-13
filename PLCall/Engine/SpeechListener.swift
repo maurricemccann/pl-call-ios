@@ -52,7 +52,7 @@ final class MicTap: @unchecked Sendable {
         // gives the voice-processing I/O unit an output path in the graph
         _ = engine.mainMixerNode
         // Voice processing ducks other audio by default, which would quieten Claude's own voice.
-        let level = UserDefaults.standard.integer(forKey: "plcall.duckLevel")   // 0 barely, 1 some, 2 a lot
+        let level = UserDefaults.standard.object(forKey: "plcall.duckLevel") as? Int ?? 2   // 0 barely, 1 some, 2 a lot (default: his report 11-12, music at full strength drowned the voice)
         input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
             enableAdvancedDucking: ObjCBool(level > 0), duckingLevel: level == 2 ? .max : level == 1 ? .mid : .min)
         let source = input.outputFormat(forBus: 0)
