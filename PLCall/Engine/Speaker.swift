@@ -68,6 +68,8 @@ enum VoiceTuning {
                 utterance.voice = voice
                 utterance.rate = Float(VoiceTuning.rate)
                 utterance.pitchMultiplier = Float(VoiceTuning.pitch)
+                // his Settings > Accessibility > Spoken Content choices (rate, pitch, equalizer) win when he turns this on
+                utterance.prefersAssistiveTechnologySettings = UserDefaults.standard.bool(forKey: "plcall.useSpokenContent")
                 utterance.postUtteranceDelay = 0.10
                 if tone, pending.isEmpty { utterance.preUtteranceDelay = 0.22 }   // the tone plays first
                 pending[ObjectIdentifier(utterance)] = utterance

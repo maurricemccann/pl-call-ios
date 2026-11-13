@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
     @AppStorage("plcall.duckLevel") private var duckLevel = 0
     @AppStorage("plcall.customRing") private var customRing = true
+    @AppStorage("plcall.useSpokenContent") private var useSpokenContent = false
     @State private var contactNote: String?
     @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
@@ -218,6 +219,7 @@ struct SettingsView: View {
                             Text("Pitch")
                         }
                     }
+                    toggleRow("Use my Spoken Content settings", "Your iPhone\u{2019}s Settings > Accessibility > Spoken Content rate, pitch and equalizer, in place of Pace and Pitch here.", isOn: $useSpokenContent)
                     Button {
                         model.previewVoice(Speaker.phone)
                     } label: {
