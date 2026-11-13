@@ -45,7 +45,52 @@ enum VoiceTuning {
         synthesizer.delegate = self
     }
 
-    var isSpeaking: Bool { !pending.isEmpty || pcTask != nil }
+    /// The call's audio engine (set by the call). While it runs, the voice, the cues and the tones play through it.
+    var engineVoice: EngineVoice?
+    private var enginePlaying = false
+    private var engineQueue: [AVSpeechUtterance] = []
+
+    var isSpeaking: Bool { !pending.isEmpty || pcTask != nil || enginePlaying }
+
+    private func utterance(_ text: String, voice: AVSpeechSynthesisVoice?, voiceID: String) -> AVSpeechUtterance {
+        let u = AVSpeechUtterance(string: text)
+        u.voice = voice
+        u.rate = Float(VoiceTuning.rate)
+        u.pitchMultiplier = Float(VoiceTuning.pitch)
+        u.prefersAssistiveTechnologySettings = voiceID != Self.personal && UserDefaults.standard.bool(forKey: "plcall.useSpokenContent")
+        return u
+    }
+
+    /// Writes one sentence at a time into the engine; the next is written when the last buffer of this one arrives.
+    private func writeNext(_ out: EngineVoice, _ id: Int) {
+        guard generation == id else { return }
+        guard !engineQueue.isEmpty else {
+            // all of it is scheduled: finished when the player has played the last of it
+            if let gap = out.silence(0.05) {
+                out.schedule(gap) { [weak self] in Task { @MainActor in self?.engineDone(id) } }
+            } else {
+                engineDone(id)
+            }
+            return
+        }
+        let next = engineQueue.removeFirst()
+        synthesizer.write(next) { [weak self] buffer in
+            guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+            if pcm.frameLength == 0 {   // the end of this sentence
+                Task { @MainActor in self?.writeNext(out, id) }
+                return
+            }
+            out.schedule(pcm)
+            if let pause = out.silence(0.02) { out.schedule(pause) }
+        }
+    }
+
+    private func engineDone(_ id: Int) {
+        guard generation == id, enginePlaying else { return }
+        enginePlaying = false
+        speakingText = ""
+        onFinished?()
+    }
 
     func speak(_ text: String, voiceID: String, line: LineClient?, tone: Bool = false) {
         stop()
@@ -62,6 +107,17 @@ enum VoiceTuning {
                 voice = mine
             } else {
                 voice = Self.bestVoice()
+            }
+            if let out = engineVoice, out.isReady {
+                enginePlaying = true
+                let id = generation
+                if tone, let chime = out.notes([(660, 0.08), (880, 0.08)]) {
+                    out.schedule(chime, volume: 0.5)
+                    if let gap = out.silence(0.18) { out.schedule(gap) }
+                }
+                engineQueue = sentences.map { utterance($0, voice: voice, voiceID: voiceID) }
+                writeNext(out, id)
+                return
             }
             for sentence in sentences {
                 let utterance = AVSpeechUtterance(string: sentence)
@@ -101,6 +157,13 @@ enum VoiceTuning {
         utterance.volume = 0.8
         cueWords = Self.letters(words)
         cueUntil = Date().addingTimeInterval(2.5)
+        if let out = engineVoice, out.isReady {
+            synthesizer.write(utterance) { buffer in
+                guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else { return }
+                out.schedule(pcm, volume: 0.8)
+            }
+            return
+        }
         synthesizer.speak(utterance)
     }
 
@@ -122,7 +185,12 @@ enum VoiceTuning {
 
     /// A very soft short tick: Claude is still working (at most every 3 seconds, never over speech).
     func tick() {
-        guard !isSpeaking, let player = try? AVAudioPlayer(data: Self.tickData) else { return }
+        guard !isSpeaking else { return }
+        if let out = engineVoice, out.isReady, let blip = out.notes([(1320, 0.03)]) {
+            out.schedule(blip, volume: 0.18)
+            return
+        }
+        guard let player = try? AVAudioPlayer(data: Self.tickData) else { return }
         player.volume = 0.18
         tonePlayer = player
         _ = player.play()
@@ -135,6 +203,11 @@ enum VoiceTuning {
     /// The call connecting (rising) or ending (falling), like a phone call's own sounds.
     func chime(_ kind: Chime) {
         let notes: [(Double, Double)] = kind == .connected ? [(523, 0.07), (659, 0.07), (784, 0.11)] : [(659, 0.09), (523, 0.09), (392, 0.14)]
+        // connecting: through the call's engine; ending: the engine is about to stop, so the plain player
+        if kind == .connected, let out = engineVoice, out.isReady, let sound = out.notes(notes) {
+            out.schedule(sound, volume: 0.45)
+            return
+        }
         guard let player = try? AVAudioPlayer(data: Self.wav(notes)) else { return }
         player.volume = 0.45
         tonePlayer = player
@@ -187,6 +260,11 @@ enum VoiceTuning {
     /// Barge-in and End: silence at once. Does not call `onFinished`.
     func stop() {
         generation += 1
+        if enginePlaying || !engineQueue.isEmpty {
+            engineQueue.removeAll()
+            enginePlaying = false
+            engineVoice?.flush()
+        }
         cancelled.merge(pending) { old, _ in old }
         pending.removeAll()
         _ = synthesizer.stopSpeaking(at: .immediate)

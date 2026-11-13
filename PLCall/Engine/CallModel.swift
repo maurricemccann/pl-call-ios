@@ -760,6 +760,7 @@ struct Turn: Identifiable, Equatable {
     // MARK: wiring
 
     private func wire() {
+        speaker.engineVoice = listener.voice   // one audio engine for the mic, the voice and the tones (his pick)
         speaker.onFinished = { [weak self] in self?.spokeDone() }
         speaker.onFailed = { [weak self] message in self?.voiceFailed(message) }
         callKit.onStarted = { [weak self] in self?.remote.enable() }

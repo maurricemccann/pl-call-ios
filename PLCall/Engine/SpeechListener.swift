@@ -19,7 +19,12 @@ final class MicTap: @unchecked Sendable {
     }
 
     private let engine = AVAudioEngine()
+    private let voice: EngineVoice
     private let clock = OSAllocatedUnfairLock(initialState: Clock())
+
+    init(voice: EngineVoice) {
+        self.voice = voice
+    }
     private var target: AVAudioFormat?
     private var onInput: (@Sendable (AnalyzerInput) -> Void)?
     private var onLevel: (@Sendable (Double) -> Void)?
@@ -51,6 +56,7 @@ final class MicTap: @unchecked Sendable {
         if !input.isVoiceProcessingEnabled { try input.setVoiceProcessingEnabled(true) }
         // gives the voice-processing I/O unit an output path in the graph
         _ = engine.mainMixerNode
+        voice.attach(to: engine)   // Claude's voice plays through this engine, so echo cancellation hears it
         // Voice processing ducks other audio by default, which would quieten Claude's own voice.
         let level = UserDefaults.standard.object(forKey: "plcall.duckLevel") as? Int ?? 2   // 0 barely, 1 some, 2 a lot (default: his report 11-12, music at full strength drowned the voice)
         input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
@@ -78,6 +84,7 @@ final class MicTap: @unchecked Sendable {
         }
         engine.prepare()
         try engine.start()
+        voice.started()
     }
 
     /// After a route change (AirPods in or out) the input format changes, so the tap is rebuilt.
@@ -87,6 +94,7 @@ final class MicTap: @unchecked Sendable {
     }
 
     func stop() {
+        voice.stopped()
         engine.inputNode.removeTap(onBus: 0)
         if engine.isRunning { engine.stop() }
     }
@@ -173,7 +181,8 @@ actor SpeechListener {
 
     nonisolated let events: AsyncStream<Event>
     private let out: AsyncStream<Event>.Continuation
-    private let mic = MicTap()
+    nonisolated let voice = EngineVoice()
+    private let mic: MicTap
     private var analyzer: SpeechAnalyzer?
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
@@ -185,6 +194,7 @@ actor SpeechListener {
     private var endOfTurnInterim = 1.6
 
     init() {
+        mic = MicTap(voice: voice)
         let (stream, continuation) = AsyncStream.makeStream(of: Event.self, bufferingPolicy: .bufferingNewest(64))
         events = stream
         out = continuation
