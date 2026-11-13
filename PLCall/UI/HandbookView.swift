@@ -46,7 +46,7 @@ struct HandbookView: View {
         Part(title: "The rest", entries: [
             Entry(title: "Lock Screen and Dynamic Island", body: "The call\u{2019}s state and the conversation, with Talk in PUSH mode, Approve and Deny when asked, and End."),
             Entry(title: "Music mode", body: "In Settings. No phone-style call, so your music keeps playing. It uses the iPhone\u{2019}s own microphone. Starts with the next call."),
-            Entry(title: "The voice", body: "Pick it in the voice list. The iPhone voice uses the best one installed: download Ava or Zoe (Premium) in Settings > Accessibility > Spoken Content > Voices. Pace and Pitch are in Call\u{2019}s Settings."),
+            Entry(title: "The voice", body: "Two voices, both on the iPhone: the iPhone voice (the best one installed: download Ava or Zoe Premium in Settings > Accessibility > Spoken Content > Voices) and your Personal Voice. Pace and Pitch are in Settings."),
             Entry(title: "AirPods", body: "Press the stem to talk, press twice to replay, three times to go back to listening."),
             Entry(title: "Updates", body: "New versions arrive in SideStore. Turn on LocalDevVPN to update or refresh, then switch back to Tailscale. Refresh at least once every 7 days."),
             Entry(title: "Capability probe", body: "Settings > Capability probe tests each feature on this iPhone and says pass or fail with the reason.")

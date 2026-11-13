@@ -124,11 +124,6 @@ actor LineClient {
         return path
     }
 
-    /// One piece of speech from a PC voice, as WAV. The slowest voice takes about 10 s a sentence.
-    func tts(text: String, voice: String) async throws -> Data {
-        let body = try JSONEncoder().encode(["text": text, "voice": voice])
-        return try await fetch("tts", method: "POST", body: body, timeout: 120)
-    }
 
     /// The session's events as they happen. Reconnects by itself with a growing wait, resuming after the last event seen.
     /// It ends by throwing only when the PC refuses (the key, or the session is gone); `onLink` says when the line drops and returns.

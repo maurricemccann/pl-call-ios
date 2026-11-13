@@ -31,8 +31,6 @@ enum VoiceTuning {
     private let synthesizer = AVSpeechSynthesizer()   // kept for the app's life: the system does not retain it
     private var pending: [ObjectIdentifier: AVSpeechUtterance] = [:]
     private var cancelled: [ObjectIdentifier: AVSpeechUtterance] = [:]   // held until their callback arrives, so no address is reused early
-    private var player: AVAudioPlayer?
-    private var pcTask: Task<Void, Never>?
     private var generation = 0
     private var tonePlayer: AVAudioPlayer?
     private var cueWords: [String] = []
@@ -50,7 +48,7 @@ enum VoiceTuning {
     private var enginePlaying = false
     private var engineQueue: [AVSpeechUtterance] = []
 
-    var isSpeaking: Bool { !pending.isEmpty || pcTask != nil || enginePlaying }
+    var isSpeaking: Bool { !pending.isEmpty || enginePlaying }
 
     private func utterance(_ text: String, voice: AVSpeechSynthesisVoice?, voiceID: String) -> AVSpeechUtterance {
         let u = AVSpeechUtterance(string: text)
@@ -94,10 +92,10 @@ enum VoiceTuning {
 
     func speak(_ text: String, voiceID: String, line: LineClient?, tone: Bool = false) {
         stop()
-        if tone { playTone() }
         let sentences = SpokenText.make(text).sentences
         speakingText = sentences.joined(separator: " ")
-        if voiceID == Self.phone || voiceID == Self.personal {
+        let voiceID = voiceID == Self.personal ? voiceID : Self.phone   // on-device voices only (his ruling 11-12)
+        do {
             let voice: AVSpeechSynthesisVoice?
             if voiceID == Self.personal {
                 guard let mine = Self.personalVoice() else {
@@ -119,6 +117,7 @@ enum VoiceTuning {
                 writeNext(out, id)
                 return
             }
+            if tone { playTone() }   // outside a call (no engine): the tone through its own player
             for sentence in sentences {
                 let utterance = AVSpeechUtterance(string: sentence)
                 utterance.voice = voice
@@ -134,13 +133,6 @@ enum VoiceTuning {
             }
             return
         }
-        guard let line else {
-            fail("That voice comes from the PC, and the line is not connected. Nothing is spoken in its place.")
-            return
-        }
-        let pieces = Self.pack(sentences)
-        let id = generation
-        pcTask = Task { await self.playFromPC(pieces, voice: voiceID, line: line, id: id) }
     }
 
     /// A short spoken cue ("Listening", "Got it") in the iPhone voice. Never while an answer is being spoken,
@@ -268,10 +260,6 @@ enum VoiceTuning {
         cancelled.merge(pending) { old, _ in old }
         pending.removeAll()
         _ = synthesizer.stopSpeaking(at: .immediate)
-        pcTask?.cancel()
-        pcTask = nil
-        player?.stop()
-        player = nil
         speakingText = ""
     }
 
@@ -310,69 +298,8 @@ enum VoiceTuning {
         }
     }
 
-    /// Sentences packed into pieces for the PC: the first alone so it is ready fast, the rest up to about 280 characters.
-    static func pack(_ sentences: [String], limit: Int = 280) -> [String] {
-        var out: [String] = []
-        for sentence in sentences {
-            if out.count > 1, let last = out.last, last.count + sentence.count + 1 < limit {
-                out[out.count - 1] = last + " " + sentence
-            } else {
-                out.append(sentence)
-            }
-        }
-        return out
-    }
-
-    private func playFromPC(_ pieces: [String], voice: String, line: LineClient, id: Int) async {
-        guard let first = pieces.first else {
-            finish(id)
-            return
-        }
-        var ahead: Task<Data, any Error>? = Task { try await line.tts(text: first, voice: voice) }
-        for index in pieces.indices {
-            guard let fetch = ahead else { break }
-            let audio: Data
-            do {
-                audio = try await fetch.value
-            } catch {
-                guard generation == id else { return }
-                pcTask = nil
-                fail("That voice is unavailable: \(plainSentence(error)) Nothing is spoken in its place.")
-                return
-            }
-            if index + 1 < pieces.count {
-                let next = pieces[index + 1]
-                ahead = Task { try await line.tts(text: next, voice: voice) }   // the next piece renders while this one plays
-            } else {
-                ahead = nil
-            }
-            guard generation == id else {
-                ahead?.cancel()
-                return
-            }
-            do {
-                let piece = try AVAudioPlayer(data: audio)
-                player = piece
-                _ = piece.play()
-                // shortcut: waits out the piece's length instead of a delegate callback; move to AVAudioPlayerDelegate if pieces overlap or gap
-                try await Task.sleep(for: .seconds(piece.duration))
-            } catch is CancellationError {
-                ahead?.cancel()
-                return
-            } catch {
-                guard generation == id else { return }
-                pcTask = nil
-                fail("The PC's audio could not be played. Nothing is spoken in its place.")
-                return
-            }
-        }
-        finish(id)
-    }
-
     private func finish(_ id: Int) {
         guard generation == id else { return }
-        pcTask = nil
-        player = nil
         speakingText = ""
         onFinished?()
     }

@@ -194,12 +194,12 @@ struct Turn: Identifiable, Equatable {
     private func apply(_ config: PLCallConfig) {
         self.config = config
         line = LineClient(config: config)
-        voices = config.voiceList + [PLCallConfig.Voice(id: Speaker.personal, label: "My Personal Voice")]
+        voices = [PLCallConfig.Voice(id: Speaker.phone, label: "iPhone"), PLCallConfig.Voice(id: Speaker.personal, label: "My Personal Voice")]
         quickReplies = config.quickReplyList
         if let saved = UserDefaults.standard.string(forKey: Keys.voice), voices.contains(where: { $0.id == saved }) {
             voiceID = saved
         } else {
-            voiceID = config.startingVoice
+            voiceID = Speaker.phone
         }
         UserDefaults.standard.set(config.usesSystemFont, forKey: Keys.systemFont)
         let words = ["Claude", "Psyclaupse", "Claude Code"] + (config.words ?? [])
@@ -1648,26 +1648,12 @@ struct Turn: Identifiable, Equatable {
             mark(id, result, detail: check.detail)
 
         case "voice":
-            if model.voiceID == Speaker.phone {
-                guard let summary = Speaker.phoneVoiceSummary() else {
-                    mark(id, .fail("No English voice is installed."))
-                    return
-                }
-                model.previewVoice(Speaker.phone)
-                mark(id, .pass, detail: summary)
-            } else {
-                guard let line = model.line else {
-                    mark(id, .fail("Load your config first."))
-                    return
-                }
-                do {
-                    let audio = try await line.tts(text: "This is the voice check.", voice: model.voiceID)
-                    model.previewVoice(model.voiceID)
-                    mark(id, .pass, detail: "The PC sent \(max(1, audio.count / 1024)) KB of audio for this voice.")
-                } catch {
-                    mark(id, .fail("The PC did not produce this voice: \(plainSentence(error))"))
-                }
+            guard let summary = Speaker.phoneVoiceSummary() else {
+                mark(id, .fail("No English voice is installed."))
+                return
             }
+            model.previewVoice(model.voiceID)
+            mark(id, .pass, detail: model.voiceID == Speaker.personal ? "Your Personal Voice." : summary)
 
         case "lockedMic":
             guard model.isInCall else {
