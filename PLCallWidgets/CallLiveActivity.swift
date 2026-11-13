@@ -87,7 +87,7 @@ struct CallActivityView: View {
                 }
                 EndButton(compact: false, tinted: false)
             }
-            DetailLine(content: content, lines: 2)
+            DetailLine(content: content, lines: hasAsk ? 2 : 3)
             if hasAsk {
                 AnswerRow()
             }

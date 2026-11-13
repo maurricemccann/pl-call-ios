@@ -44,7 +44,7 @@ import Foundation
             break
         }
         let stateName = state.rawValue
-        let shortLine = String(line.prefix(160))   // the whole activity must stay under 4 KB
+        let shortLine = String(line.prefix(220))   // the whole activity must stay under 4 KB
         let id = askID
         let text = askText
         enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push) }

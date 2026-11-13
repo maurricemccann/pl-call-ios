@@ -71,6 +71,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var awakeUntil = Date.distantPast   // wake word mode: no name needed until then
     @ObservationIgnored private var lastSpoke = Date.distantPast    // when the voice last stopped
     @ObservationIgnored private var lastHearingPublish = Date.distantPast
+    @ObservationIgnored private var lockLine = ""            // the last thing said by either side, for the Lock Screen
     @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
 
     private enum Say {
@@ -524,8 +525,9 @@ struct Turn: Identifiable, Equatable {
                       !self.speaker.isSpeaking, self.state != .hearing else { return }
                 self.interimSpoken = words
                 self.append(.claude, words)
-                self.set(.speaking, Say.speaking)
                 let brief = SpokenText.make(words).sentences.prefix(2).joined(separator: " ")
+                self.lockLine = "Claude: " + brief
+                self.set(.speaking, Say.speaking)
                 self.speaker.speak(brief, voiceID: self.voiceID, line: self.line)
             }
         }
@@ -555,6 +557,7 @@ struct Turn: Identifiable, Equatable {
     /// His words, spoken or typed: an answer when something is waiting, else a message to the session.
     private func took(_ text: String) {
         armed = false
+        lockLine = "You: " + text
         append(.me, text)
         if let ask = pendingAsk { answer(text, to: ask) } else { deliver(text) }
     }
@@ -844,6 +847,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
         }
+        lockLine = "Claude: " + SpokenText.make(text).sentences.joined(separator: " ")
         set(.speaking, Say.speaking)
         speaker.speak(text, voiceID: id ?? voiceID, line: line, tone: tone)
     }
@@ -974,6 +978,7 @@ struct Turn: Identifiable, Equatable {
         heldReply = nil
         interimTask?.cancel()
         interimSpoken = ""
+        lockLine = ""
         micLevel = 0
         speaker.stop()
         remote.disable()
@@ -1026,7 +1031,9 @@ struct Turn: Identifiable, Equatable {
     private func publish(alert: Bool = false) {
         SharedState.write(state: state, line: statusLine, ask: askText)
         ControlCenter.shared.reloadAllControls()
-        activity.update(state: state, line: statusLine, ask: pendingAsk, alert: alert, push: isInCall && !handsFree)
+        // The Lock Screen shows the conversation: his words while he talks, otherwise the last thing either side said.
+        let shown = (state == .hearing || state == .lost || state == .connecting || lockLine.isEmpty) ? statusLine : lockLine
+        activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree)
     }
 
     private func append(_ who: Turn.Who, _ text: String) {
