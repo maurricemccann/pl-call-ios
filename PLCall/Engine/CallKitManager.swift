@@ -34,7 +34,7 @@ import UIKit
     override init() {
         let setup = CXProviderConfiguration()
         setup.supportsVideo = false
-        setup.supportedHandleTypes = [.generic]
+        setup.supportedHandleTypes = [.generic, .emailAddress]
         setup.maximumCallGroups = 1
         setup.maximumCallsPerCallGroup = 1
         setup.includesCallsInRecents = true
@@ -60,7 +60,7 @@ import UIKit
         let id = UUID()
         callID = id
         outgoing = true
-        let action = CXStartCallAction(call: id, handle: CXHandle(type: .generic, value: Self.caller))
+        let action = CXStartCallAction(call: id, handle: CXHandle(type: .emailAddress, value: ClaudeContact.handle))
         action.isVideo = false
         controller.request(CXTransaction(action: action)) { @Sendable error in
             guard let error else { return }
@@ -90,7 +90,7 @@ import UIKit
         guard callID == nil, ringID == nil else { return "A call is already up." }
         let id = UUID()
         let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: Self.caller)
+        update.remoteHandle = CXHandle(type: .emailAddress, value: ClaudeContact.handle)
         update.localizedCallerName = String(reason.prefix(60))
         update.hasVideo = false
         update.supportsHolding = true
@@ -133,6 +133,8 @@ import UIKit
         guard id == callID else { return }
         provider.reportOutgoingCall(with: id, startedConnectingAt: nil)
         let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .emailAddress, value: ClaudeContact.handle)
+        update.localizedCallerName = Self.caller
         update.supportsHolding = true   // a real call can hold Claude and come back to it
         update.supportsGrouping = false
         update.supportsUngrouping = false

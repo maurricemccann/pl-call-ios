@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
     @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
+    @State private var contactNote: String?
     @AppStorage(VoiceTuning.pauseKey) private var pause = VoiceTuning.defaultPause
     @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
     @AppStorage(VoiceTuning.pitchKey) private var voicePitch = VoiceTuning.defaultPitch
@@ -143,6 +144,17 @@ struct SettingsView: View {
 
                 Section {
                     toggleRow("Stay reachable", "With no call up, Call keeps a quiet line open in the background, so Claude can ring you for an approval or a question. Uses some battery.", isOn: reach)
+                    Button {
+                        Task { contactNote = await ClaudeContact.add() ?? "Added. Calls with Claude now show the card in Recents." }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Add Claude to Contacts")
+                                .plFont(.body)
+                            Text(contactNote ?? "So Recents and the ring show Claude with the heart mark, not an unknown caller.")
+                                .plFont(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Picker(selection: $ringSeconds) {
                         Text("10 seconds").tag(10)
                         Text("15 seconds").tag(15)
