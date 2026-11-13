@@ -15,6 +15,7 @@ final class MicTap: @unchecked Sendable {
     private struct Clock: Sendable {
         var accepting = true
         var frames: Int64 = 0
+        var lastLoud: Double = 0   // when the mic last heard something as loud as speech
     }
 
     private let engine = AVAudioEngine()
@@ -61,7 +62,9 @@ final class MicTap: @unchecked Sendable {
         let clock = self.clock
         // This closure is built in a nonisolated method on purpose: the system calls it on an audio thread.
         input.installTap(onBus: 0, bufferSize: 4096, format: source) { buffer, _ in
-            onLevel(MicTap.level(of: buffer))
+            let level = MicTap.level(of: buffer)
+            onLevel(level)
+            if level > 0.35 { clock.withLock { $0.lastLoud = CFAbsoluteTimeGetCurrent() } }
             guard let converted = MicTap.convert(buffer, with: converter, to: target) else { return }
             let frames = Int64(converted.frameLength)
             let start = clock.withLock { state -> CMTime? in
@@ -98,6 +101,11 @@ final class MicTap: @unchecked Sendable {
     /// Closed = buffers are dropped before the analyzer (PUSH mode between presses). The level still reports.
     func setAccepting(_ on: Bool) {
         clock.withLock { $0.accepting = on }
+    }
+
+    /// Seconds since the mic last heard something as loud as speech.
+    func quietSeconds() -> Double {
+        CFAbsoluteTimeGetCurrent() - clock.withLock { $0.lastLoud }
     }
 
     /// Where the analyzer's timeline is now: everything before this has been handed over.
@@ -278,10 +286,25 @@ actor SpeechListener {
         let wait = volatile.isEmpty ? endOfTurn : endOfTurnInterim   // still-changing words get a longer pause
         pauseTask?.cancel()
         pauseTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(wait))
-            guard !Task.isCancelled else { return }
-            await self?.endTurn()
+            // The words stopped changing. The turn ends only once the mic is quiet too, so a breath or a slow
+            // transcriber does not cut him off. Steady noise (music) cannot hold it open past three pauses.
+            var waited = 0.0
+            var next = wait
+            while true {
+                try? await Task.sleep(for: .seconds(next))
+                guard !Task.isCancelled, let self else { return }
+                waited += next
+                if await self.quiet() >= 0.7 || waited >= wait * 3 {
+                    await self.endTurn()
+                    return
+                }
+                next = 0.3
+            }
         }
+    }
+
+    private func quiet() -> Double {
+        mic.quietSeconds()
     }
 
     private func endTurn() async {

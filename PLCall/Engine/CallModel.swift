@@ -27,6 +27,7 @@ struct Turn: Identifiable, Equatable {
     var handsFree = true
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
+    var wakeWord = false                 // hands-free: only words after "Claude" are sent
     var speakProgress = true             // short lines Claude writes while it works are spoken too
     var shortAnswers = true              // a long answer is said as a few sentences (on-device model), the full text stays on screen
     var voices: [PLCallConfig.Voice] = []
@@ -67,6 +68,9 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var ownsAudio = false        // the session was activated here, not by CallKit
     @ObservationIgnored private var earsRetried = false      // the ears are rebuilt once per call after a speech error
     @ObservationIgnored private var interimTask: Task<Void, Never>?
+    @ObservationIgnored private var awakeUntil = Date.distantPast   // wake word mode: no name needed until then
+    @ObservationIgnored private var lastSpoke = Date.distantPast    // when the voice last stopped
+    @ObservationIgnored private var lastHearingPublish = Date.distantPast
     @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
 
     private enum Say {
@@ -91,6 +95,7 @@ struct Turn: Identifiable, Equatable {
         static let cues = "plcall.spokenCues"
         static let music = "plcall.musicMode"
         static let progress = "plcall.speakProgress"
+        static let wake = "plcall.wakeWord"
         static let short = "plcall.shortAnswers"
     }
 
@@ -99,6 +104,7 @@ struct Turn: Identifiable, Equatable {
         spokenCues = UserDefaults.standard.object(forKey: Keys.cues) as? Bool ?? true
         musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
+        wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
         shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? true
         wire()
         activity.endStale()
@@ -338,6 +344,11 @@ struct Turn: Identifiable, Equatable {
         UserDefaults.standard.set(on, forKey: Keys.cues)
     }
 
+    func setWakeWord(_ on: Bool) {
+        wakeWord = on
+        UserDefaults.standard.set(on, forKey: Keys.wake)
+    }
+
     func setSpeakProgress(_ on: Bool) {
         speakProgress = on
         UserDefaults.standard.set(on, forKey: Keys.progress)
@@ -476,6 +487,7 @@ struct Turn: Identifiable, Equatable {
             lastError = nil
             if state == .lost { rest() }
         } else if isInCall {
+            if state != .lost, spokenCues { speaker.cue("Line dropped") }
             set(.lost, "The line dropped. Reconnecting")
         } else {
             lastError = "The PC is not answering. Check that Tailscale is on."
@@ -691,11 +703,16 @@ struct Turn: Identifiable, Equatable {
             let text = speaker.withoutCue(raw)
             guard Self.hasWords(text) else { return }   // noise comes back as a lone "."
             if speaker.isSpeaking {
-                guard isBargeIn(text) else { return }
+                guard isBargeIn(text) || VoiceCommand.parse(text) == .stop else { return }
                 speaker.stop()   // he spoke over the voice: it stops at once
+                lastSpoke = Date()
             }
             if state != .hearing { set(.hearing, Say.hearing) }
             statusLine = "Hearing: \(text)"
+            if Date().timeIntervalSince(lastHearingPublish) > 1 {
+                lastHearingPublish = Date()
+                publish()   // the Lock Screen shows what the mic is catching, about once a second
+            }
         case .turn(let raw):
             let text = Self.tidy(speaker.withoutCue(raw))
             guard Self.hasWords(text) else {
@@ -703,7 +720,12 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             guard speaker.isSpeaking else {
-                took(text)
+                if pendingAsk == nil, let command = VoiceCommand.parse(text), runs(command) { return }
+                guard let words = awake(text) else {
+                    if state == .hearing { rest() }
+                    return
+                }
+                took(words)
                 if spokenCues, awaitingReply, pendingAsk == nil, !speaker.isSpeaking { speaker.cue("Got it") }
                 return
             }
@@ -718,6 +740,43 @@ struct Turn: Identifiable, Equatable {
                 audioActivated()   // the listener dropped its finished analyzer, so this builds the ears again, once per call
             }
         }
+    }
+
+    /// Runs a spoken command. False when it should go to the session as a message instead:
+    /// "stop" and its kind only count while the voice is talking or has just stopped.
+    private func runs(_ command: VoiceCommand) -> Bool {
+        switch command {
+        case .stop:
+            guard Date().timeIntervalSince(lastSpoke) < 4 else { return false }
+            speaker.stop()
+            heldReply = nil
+            rest()
+        case .again:
+            replay()
+        case .slower, .faster:
+            let step = command == .slower ? -0.04 : 0.04
+            let pace = min(max(VoiceTuning.rate + step, VoiceTuning.rateRange.lowerBound), VoiceTuning.rateRange.upperBound)
+            UserDefaults.standard.set(pace, forKey: VoiceTuning.rateKey)
+            replay()
+        case .end:
+            endCall()
+        }
+        return true
+    }
+
+    /// Wake word mode: his words after "Claude", or everything for 20 seconds after the name or after an answer. nil = not for the session.
+    private func awake(_ text: String) -> String? {
+        guard wakeWord, handsFree, pendingAsk == nil else { return text }
+        if let rest = WakeWord.after(text) {
+            awakeUntil = Date().addingTimeInterval(20)
+            let words = Self.tidy(rest)
+            if Self.hasWords(words) { return words }
+            speaker.cue("Yes?")
+            return nil
+        }
+        guard Date() < awakeUntil else { return nil }
+        awakeUntil = Date().addingTimeInterval(20)
+        return text
     }
 
     private static func hasWords(_ text: String) -> Bool {
@@ -790,6 +849,8 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func spokeDone() {
+        lastSpoke = Date()
+        awakeUntil = Date().addingTimeInterval(20)   // wake word mode: a follow-up needs no name
         guard isInCall else {
             AudioSessionManager.deactivate()
             rest()
