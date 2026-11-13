@@ -389,8 +389,23 @@ struct Turn: Identifiable, Equatable {
         keepAlive.start()
     }
 
+    /// A real call put Claude on hold: stop talking and listening. Coming back, the audio returns through CallKit.
+    private func heldByOtherCall(_ held: Bool) {
+        guard isInCall else { return }
+        if held {
+            speaker.stop()
+            listener.setAccepting(false)
+            set(.lost, "On hold for another call")
+        } else {
+            updateGate()
+            rest()
+        }
+    }
+
     /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
+    /// While he is on another call (his girlfriend, anyone) it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
+        if callKit.otherCallActive { return nil }
         keepAlive.stop()
         AudioSessionManager.deactivate()
         let refused = await callKit.ring(reason: reason)
@@ -533,6 +548,7 @@ struct Turn: Identifiable, Equatable {
             self.backToReachable()
         }
         callKit.onMuteToggled = { [weak self] in self?.talk() }
+        callKit.onHeld = { [weak self] held in self?.heldByOtherCall(held) }
         IntentBridge.approve = { [weak self] message in self?.answerPermission(allow: true, message: message) }
         IntentBridge.deny = { [weak self] message in self?.answerPermission(allow: false, message: message) }
         IntentBridge.endCall = { [weak self] in

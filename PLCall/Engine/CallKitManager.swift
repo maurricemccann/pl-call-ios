@@ -12,6 +12,15 @@ import CallKit
     var onAnswered: (() -> Void)?          // he answered a ring
     var onDeclined: (() -> Void)?          // he declined a ring
     var onMuteToggled: (() -> Void)?       // the headset's press during a call arrives as mute
+    var onHeld: ((Bool) -> Void)?          // another call put this one on hold (true) or let it go (false)
+
+    private let observer = CXCallObserver()
+
+    /// Another call (a real phone call, FaceTime) is up on this iPhone: a ring from Claude would cut into it.
+    var otherCallActive: Bool {
+        let mine = Set([callID, ringID].compactMap { $0 })
+        return observer.calls.contains { !mine.contains($0.uuid) && !$0.hasEnded }
+    }
 
     private static let caller = "Claude"
 
@@ -73,7 +82,7 @@ import CallKit
         update.remoteHandle = CXHandle(type: .generic, value: Self.caller)
         update.localizedCallerName = String(reason.prefix(60))
         update.hasVideo = false
-        update.supportsHolding = false
+        update.supportsHolding = true
         update.supportsGrouping = false
         update.supportsUngrouping = false
         update.supportsDTMF = false
@@ -101,6 +110,12 @@ import CallKit
     private func started(_ id: UUID) {
         guard id == callID else { return }
         provider.reportOutgoingCall(with: id, startedConnectingAt: nil)
+        let update = CXCallUpdate()
+        update.supportsHolding = true   // a real call can hold Claude and come back to it
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        provider.reportCall(with: id, updated: update)
         onStarted?()
     }
 
@@ -161,7 +176,9 @@ import CallKit
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
-        action.fail()   // one call, never held
+        let held = action.isOnHold
+        action.fulfill()
+        Task { @MainActor in self.onHeld?(held) }
     }
 
     nonisolated func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
