@@ -273,6 +273,7 @@ struct Turn: Identifiable, Equatable {
 
     /// PUSH mode, the headset press and the Talk button: stop the voice and take one turn.
     func talk() {
+        heardFromHim()
         if callKit.isRinging {
             callKit.answerRing()
             return
@@ -458,6 +459,37 @@ struct Turn: Identifiable, Equatable {
 
     @ObservationIgnored private var lastMutedWarning = Date.distantPast
     @ObservationIgnored private var lastTick = Date.distantPast
+    @ObservationIgnored private var lastFromHim = Date()          // his last words, tap or press in this call
+    @ObservationIgnored private var idleWatch: Task<Void, Never>?
+    @ObservationIgnored private var warnedIdle = false
+
+    /// Hangs up after about 50 minutes with nothing from him (asleep), with a spoken warning a minute before.
+    private func watchForSleep() {
+        idleWatch?.cancel()
+        lastFromHim = Date()
+        warnedIdle = false
+        idleWatch = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, self.isInCall else { return }
+                let quiet = Date().timeIntervalSince(self.lastFromHim)
+                if quiet >= 50 * 60 {
+                    RingLog.note("call ended after 50 minutes with nothing from him")
+                    self.endCall()
+                    return
+                }
+                if quiet >= 49 * 60, !self.warnedIdle {
+                    self.warnedIdle = true
+                    self.speaker.cue("Still there? I'll hang up in a minute.")
+                }
+            }
+        }
+    }
+
+    private func heardFromHim() {
+        lastFromHim = Date()
+        warnedIdle = false
+    }
 
     func setWorkingSounds(_ on: Bool) {
         workingSounds = on
@@ -910,6 +942,7 @@ struct Turn: Identifiable, Equatable {
 
     /// His words, spoken or typed: an answer when something is waiting, else a message to the session.
     private func took(_ text: String) {
+        heardFromHim()
         armed = false
         lockLine = "You: " + text
         append(.me, text)
@@ -1048,10 +1081,19 @@ struct Turn: Identifiable, Equatable {
         case .question(_, _, let question, _):
             if let index = SpokenAnswer.option(text, of: question) {
                 answerQuestion(option: index)
-            } else {
-                // Not one of the options: he is talking, not answering, so it goes to the session as a message.
-                resolve(ask)
-                deliver(text)
+                return
+            }
+            Task {
+                let judged = await OnDeviceJudge.option(text, question: question.question, options: question.options)
+                guard self.pendingAsk == ask else { return }
+                if let judged {
+                    self.answerQuestion(option: judged)
+                } else if self.isInCall {
+                    let names = question.options.prefix(4).joined(separator: ", or ")
+                    self.speaker.speak("I did not catch which one. Say \(names).", voiceID: self.voiceID, line: self.line)
+                } else {
+                    self.statusLine = "Pick an option."
+                }
             }
         }
     }
@@ -1332,6 +1374,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             self.callKit.reportConnected()
+            if self.idleWatch == nil { self.watchForSleep() }
             self.matchProximityToRoute()
             if self.state == .connecting { self.speaker.chime(.connected) }
             guard self.state == .connecting || self.state == .lost else { return }
@@ -1429,6 +1472,8 @@ struct Turn: Identifiable, Equatable {
         heldReply = nil
         interimTask?.cancel()
         spokenParts = []
+        idleWatch?.cancel()
+        idleWatch = nil
         onHold = false
         lockLine = ""
         micLevel = 0

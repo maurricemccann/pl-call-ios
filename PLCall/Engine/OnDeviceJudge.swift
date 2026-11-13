@@ -52,6 +52,26 @@ enum OnDeviceJudge {
         #endif
     }
 
+    /// The index of the option a loosely worded answer means, or nil when unclear or the model is not available.
+    static func option(_ heard: String, question: String, options: [String]) async -> Int? {
+        #if canImport(FoundationModels)
+        guard isAvailable, !options.isEmpty else { return nil }
+        let list = options.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let session = LanguageModelSession(instructions: """
+            A person was asked a question with numbered options and answered out loud. Speech recognition may have misheard a word.
+            Reply with only the number of the option they chose. Reply NONE if there is any doubt or they did not pick one.
+            """)
+        let prompt = "Question: \(String(question.prefix(300)))\nOptions:\n\(list)\nTheir answer: \(String(heard.prefix(300)))"
+        guard let reply = try? await session.respond(to: prompt) else { return nil }
+        let word = reply.content.uppercased()
+        if word.contains("NONE") { return nil }
+        guard let digit = word.first(where: \.isNumber), let n = Int(String(digit)), options.indices.contains(n - 1) else { return nil }
+        return n - 1
+        #else
+        return nil
+        #endif
+    }
+
     /// true = yes, false = no, nil = unclear or the model is not available.
     static func decision(_ heard: String) async -> Bool? {
         #if canImport(FoundationModels)
