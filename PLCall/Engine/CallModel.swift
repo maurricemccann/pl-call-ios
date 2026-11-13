@@ -418,6 +418,7 @@ struct Turn: Identifiable, Equatable {
     fileprivate func stayReachableIfWanted() {
         guard stayReachable, hasConfig, !isInCall, !callKit.isBusy, UIApplication.shared.applicationState != .active else { return }
         keepAlive.start()
+        RingLog.note(keepAlive.isOn ? "background line on" : "background line FAILED to start")
     }
 
     /// A real call put Claude on hold: stop talking and listening. Coming back, the audio returns through CallKit.
@@ -443,11 +444,19 @@ struct Turn: Identifiable, Equatable {
     /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
     /// While he is on another call (his girlfriend, anyone) it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
-        if callKit.otherCallActive || !CallFocusFilter.ringsAllowed { return nil }
+        if callKit.otherCallActive {
+            RingLog.note("no ring: another call is up")
+            return nil
+        }
+        if !CallFocusFilter.ringsAllowed {
+            RingLog.note("no ring: a Focus filter says notifications only")
+            return nil
+        }
         head.start()   // two nods answer the ring, two shakes decline it
         keepAlive.stop()
         AudioSessionManager.deactivate()
         let refused = await callKit.ring(reason: reason)
+        RingLog.note(refused.map { "ring refused: \($0)" } ?? "rang: \(reason)")
         if refused != nil {
             if !(pendingAsk.map { if case .permission = $0 { return true } else { return false } } ?? false) { head.stop() }
             stayReachableIfWanted()
@@ -596,6 +605,7 @@ struct Turn: Identifiable, Equatable {
         callKit.onAnswered = { [weak self] in self?.ringAnswered() }
         callKit.onDeclined = { [weak self] in
             guard let self else { return }
+            RingLog.note("ring ended without an answer")
             if !self.probe.sawRing(answered: false) { self.noteMissedRing() }
             if !self.pendingIsPermission { self.head.stop() }
             self.backToReachable()
@@ -684,6 +694,7 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func lineFailed(_ error: any Error) {
+        RingLog.note("line to the PC failed: \(plainSentence(error))")
         if let failure = error as? LineClient.Failure, failure == .unauthorized {
             refuseKey()
             return
@@ -790,6 +801,7 @@ struct Turn: Identifiable, Equatable {
     // MARK: asks
 
     private func raise(_ ask: Ask) {
+        RingLog.note("ask arrived (in call: \(isInCall), line kept open: \(keepAlive.isOn))")
         if let earlier = pendingAsk, earlier != ask {
             // a second ask replaces the first: the first one's notification must not stay answerable
             switch earlier {
@@ -1194,6 +1206,7 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func ringAnswered() {
+        RingLog.note("ring answered")
         keepAlive.stop()
         if !pendingIsPermission { head.stop() }
         if probe.sawRing(answered: true) {

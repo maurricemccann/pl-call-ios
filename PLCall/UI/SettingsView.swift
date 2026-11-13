@@ -216,6 +216,23 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
+                        List {
+                            ForEach(Array(RingLog.lines.enumerated()), id: \.offset) { _, line in
+                                Text(line)
+                                    .plFont(.footnote)
+                                    .textSelection(.enabled)
+                            }
+                            Button("Clear the log", role: .destructive) { RingLog.clear() }
+                        }
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .principal) { title("Ring log") }
+                        }
+                    } label: {
+                        Text("Ring log")
+                            .plFont(.body)
+                    }
+                    NavigationLink {
                         HandbookView()
                             .navigationBarTitleDisplayMode(.inline)
                             .toolbar {
