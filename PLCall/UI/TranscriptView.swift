@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The conversation in Messages' shape: his turns blue and trailing, Claude's leading, system lines small and centred.
+/// The conversation in Messages' shape: his turns house orange and trailing, Claude's leading, system lines small and centred.
 /// Plain surfaces only: the content layer never wears Liquid Glass.
 struct TranscriptView: View {
     let model: CallModel

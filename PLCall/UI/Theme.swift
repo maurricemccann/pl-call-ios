@@ -3,14 +3,16 @@ import SwiftUI
 import UIKit
 
 /// Tokens. Apple's system colours, sizes and motion come first; the house layer is the orange tint,
-/// the hand-drawn title, the pattern backdrop, Claude's coral and the blue of his own messages.
+/// the hand-drawn title, the pattern backdrop, Claude's coral and the house orange of his own messages.
 enum T {
     // House layer
     static let orange = Color(red: 0.910, green: 0.392, blue: 0.118)
     static let coral = Color(red: 0.851, green: 0.467, blue: 0.341)
-    static let sentTop = Color(red: 0.306, green: 0.729, blue: 1.0)
-    static let sentBottom = Color(red: 0.0, green: 0.533, blue: 1.0)
-    static let sentContrast = Color(red: 0.0, green: 0.33, blue: 0.80)   // Increase Contrast: white text needs a darker blue
+    // his messages in house orange (his ruling 11-12, S348: "make my bubbles orange not blue"); the bottom is deepened so
+    // white text stays readable (3.7:1 at the top, 4.7:1 at the bottom)
+    static let sentTop = Color(red: 0.860, green: 0.370, blue: 0.100)
+    static let sentBottom = Color(red: 0.780, green: 0.300, blue: 0.070)
+    static let sentContrast = Color(red: 0.690, green: 0.255, blue: 0.040)   // Increase Contrast: white text needs a darker orange
 
     // Apple system colours: they carry their own Increase Contrast variants
     static let call = Color(uiColor: .systemGreen)
