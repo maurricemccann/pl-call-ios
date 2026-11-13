@@ -158,7 +158,7 @@ def main():
         "PLCallWidgets": ("com.apple.product-type.app-extension", {"PLCallWidgets", "Shared", "PLCallCore/Sources/PLCallCore"}),
     }
     targets = {objects[t].get("name"): (t, objects[t]) for t in project.get("targets", []) if t in objects}
-    need(set(targets) == set(want), f"targets are {sorted(targets)}, want {sorted(want)}")
+    need(set(want) <= set(targets) <= set(want) | {"PLCallWatch"}, f"targets are {sorted(targets)}, want {sorted(want)} (PLCallWatch is optional)")
     for name, (tid, target) in targets.items():
         if name not in want:
             continue
@@ -185,7 +185,7 @@ def main():
                 need(settings.get("ASSETCATALOG_COMPILER_APPICON_NAME") == "AppIcon", "PLCall: app icon name")
 
     # the app embeds the extension and depends on it
-    if set(targets) == set(want):
+    if set(want) <= set(targets):
         app_id, app = targets["PLCall"]
         ext_id, ext = targets["PLCallWidgets"]
         embeds = [objects[ph] for ph in app.get("buildPhases", []) if isa(ph) == "PBXCopyFilesBuildPhase"]

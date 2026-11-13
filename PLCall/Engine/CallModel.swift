@@ -340,6 +340,19 @@ struct Turn: Identifiable, Equatable {
         publish()   // the Lock Screen shows or hides its Talk button
     }
 
+    /// A button on the watch app. It can only steer a call that is already up: the mic cannot start from the background.
+    func watchCommand(_ command: String, text: String?) {
+        switch command {
+        case "approve": answerPermission(allow: true, message: text)
+        case "deny": answerPermission(allow: false, message: text)
+        case "replay": replay()
+        case "talk": if isInCall { talk() }
+        case "end": endCall()
+        case "state": publish()
+        default: break
+        }
+    }
+
     func setSpokenCues(_ on: Bool) {
         spokenCues = on
         UserDefaults.standard.set(on, forKey: Keys.cues)
@@ -437,6 +450,7 @@ struct Turn: Identifiable, Equatable {
             self?.talk()
         }
         NotificationHub.shared.register()
+        WatchLink.shared.start()
         AudioSessionManager.observe { change in
             Task { @MainActor in CallModel.shared.audioChanged(change) }
         }
@@ -1034,6 +1048,10 @@ struct Turn: Identifiable, Equatable {
         // The Lock Screen shows the conversation: his words while he talks, otherwise the last thing either side said.
         let shown = (state == .hearing || state == .lost || state == .connecting || lockLine.isEmpty) ? statusLine : lockLine
         activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree)
+        var canAnswer = false
+        if case .permission? = pendingAsk { canAnswer = true }
+        WatchLink.shared.send(state: state.rawValue, line: String(shown.prefix(200)), ask: askText.map { String($0.prefix(200)) },
+                              canAnswer: canAnswer, push: !handsFree, inCall: isInCall)
     }
 
     private func append(_ who: Turn.Who, _ text: String) {

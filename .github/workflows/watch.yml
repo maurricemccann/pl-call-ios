@@ -1,0 +1,90 @@
+name: watch
+
+# Started by hand only. An experiment: the phone app with the watch app inside it, published as a separate
+# pre-release so the normal update feed is never touched. A free signing may refuse the watch part.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ios-watch:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      APP: build/Release-iphoneos/PLCall.app
+      WATCH: build/Release-watchos/PLCallWatch.app
+      VERSION: "0.2.${{ github.run_number }}"
+      BUILD: "${{ github.run_number }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i -E "watch|iphoneos" || true
+
+      - name: Check the project file
+        run: python3 scripts/check_pbxproj.py
+
+      - name: Build the phone app (unsigned)
+        run: |
+          if ! xcodebuild -project PLCall.xcodeproj -target PLCall -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" CURRENT_PROJECT_VERSION="$BUILD" MARKETING_VERSION="$VERSION" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > phone.log 2>&1; then
+            echo "===== PHONE BUILD FAILED ====="
+            grep -E "error:|BUILD FAILED" phone.log | awk '!seen[$0]++' | head -100
+            exit 1
+          fi
+          tail -n 3 phone.log
+
+      - name: Build the watch app (unsigned)
+        run: |
+          if ! xcodebuild -project PLCall.xcodeproj -target PLCallWatch -configuration Release -sdk watchos \
+            SYMROOT="$PWD/build" CURRENT_PROJECT_VERSION="$BUILD" MARKETING_VERSION="$VERSION" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > watch.log 2>&1; then
+            echo "===== WATCH BUILD FAILED ====="
+            grep -E "error:|BUILD FAILED" watch.log | awk '!seen[$0]++' | head -100
+            tail -n 40 watch.log
+            exit 1
+          fi
+          tail -n 3 watch.log
+          ls "$WATCH"
+          /usr/libexec/PlistBuddy -c "Print :WKCompanionAppBundleIdentifier" "$WATCH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$WATCH/Info.plist"
+
+      - name: Put the watch app inside the phone app
+        run: |
+          mkdir -p "$APP/Watch"
+          cp -R "$WATCH" "$APP/Watch/"
+          ls "$APP/Watch"
+
+      - name: Mark the App Group
+        run: |
+          if codesign --force --sign - "$APP/Watch/PLCallWatch.app" \
+            && codesign --force --sign - --entitlements scripts/PLCallWidgets.entitlements "$APP/PlugIns/PLCallWidgets.appex" \
+            && codesign --force --sign - --entitlements scripts/PLCall.entitlements "$APP"; then
+            echo "marked"
+          else
+            echo "::warning::The App Group could not be marked."
+          fi
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qr PLCall-watch.ipa Payload
+          ls -l PLCall-watch.ipa
+
+      - name: Publish as a pre-release (the update feed stays on the phone-only build)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "watch-${{ github.run_number }}" PLCall-watch.ipa \
+            --title "Watch experiment ${{ github.run_number }}" \
+            --notes "The phone app with the watch app inside. Unsigned; signed on the phone by SideStore." \
+            --prerelease --latest=false

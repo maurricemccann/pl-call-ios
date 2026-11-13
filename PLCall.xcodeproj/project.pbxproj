@@ -37,6 +37,7 @@
 /* Begin PBXFileReference section */
 		B20000000000000000000030 /* PLCall.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PLCall.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000031 /* PLCallWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PLCallWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B30000000000000000000030 /* PLCallWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PLCallWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -93,6 +94,11 @@
 			path = PLCallWidgets;
 			sourceTree = "<group>";
 		};
+		B30000000000000000000010 /* PLCallWatch */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PLCallWatch;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,6 +116,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B30000000000000000000051 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -120,6 +133,7 @@
 				B20000000000000000000011 /* Shared */,
 				B20000000000000000000004 /* PLCallCore */,
 				B20000000000000000000013 /* PLCallWidgets */,
+				B30000000000000000000010 /* PLCallWatch */,
 				B20000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -129,6 +143,7 @@
 			children = (
 				B20000000000000000000030 /* PLCall.app */,
 				B20000000000000000000031 /* PLCallWidgets.appex */,
+				B30000000000000000000030 /* PLCallWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -192,6 +207,26 @@
 			productReference = B20000000000000000000031 /* PLCallWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		B30000000000000000000070 /* PLCallWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B30000000000000000000090 /* Build configuration list for PBXNativeTarget "PLCallWatch" */;
+			buildPhases = (
+				B30000000000000000000050 /* Sources */,
+				B30000000000000000000051 /* Frameworks */,
+				B30000000000000000000052 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B30000000000000000000010 /* PLCallWatch */,
+			);
+			name = PLCallWatch;
+			productName = PLCallWatch;
+			productReference = B30000000000000000000030 /* PLCallWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -206,6 +241,9 @@
 						CreatedOnToolsVersion = 27.0;
 					};
 					B20000000000000000000071 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					B30000000000000000000070 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -226,6 +264,7 @@
 			targets = (
 				B20000000000000000000070 /* PLCall */,
 				B20000000000000000000071 /* PLCallWidgets */,
+				B30000000000000000000070 /* PLCallWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -239,6 +278,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B20000000000000000000062 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30000000000000000000052 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -278,6 +324,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B20000000000000000000060 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30000000000000000000050 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -428,6 +481,50 @@
 			};
 			name = Release;
 		};
+		B300000000000000000000A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Call;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.psychedluxuries.call;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.psychedluxuries.call.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Debug;
+		};
+		B300000000000000000000A1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Call;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.psychedluxuries.call;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.psychedluxuries.call.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -454,6 +551,15 @@
 			buildConfigurations = (
 				B200000000000000000000A4 /* Debug */,
 				B200000000000000000000A5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B30000000000000000000090 /* Build configuration list for PBXNativeTarget "PLCallWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B300000000000000000000A0 /* Debug */,
+				B300000000000000000000A1 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
