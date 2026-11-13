@@ -45,6 +45,9 @@ enum VoiceTuning {
 
     /// The call's audio engine (set by the call). While it runs, the voice, the cues and the tones play through it.
     var engineVoice: EngineVoice?
+    /// OFF (his report 11-12 after 0.3.52: the voice came out thin and broken). `synthesizer.write` into the voice-processing engine
+    /// loses voice quality and Personal Voice; speech plays with `speak` as in 0.3.45 to 0.3.51. Tones may still use the engine.
+    private static let speechThroughEngine = false
     private var enginePlaying = false
     private var engineQueue: [AVSpeechUtterance] = []
 
@@ -106,7 +109,7 @@ enum VoiceTuning {
             } else {
                 voice = Self.bestVoice()
             }
-            if let out = engineVoice, out.isReady {
+            if Self.speechThroughEngine, let out = engineVoice, out.isReady {
                 enginePlaying = true
                 let id = generation
                 if tone, let chime = out.notes([(660, 0.08), (880, 0.08)]) {
@@ -149,7 +152,7 @@ enum VoiceTuning {
         utterance.volume = 0.8
         cueWords = Self.letters(words)
         cueUntil = Date().addingTimeInterval(2.5)
-        if let out = engineVoice, out.isReady {
+        if Self.speechThroughEngine, let out = engineVoice, out.isReady {
             synthesizer.write(utterance) { buffer in
                 guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else { return }
                 out.schedule(pcm, volume: 0.8)
