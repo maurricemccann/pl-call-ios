@@ -59,7 +59,7 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
 
     func postPermission(requestID: String, toolUseID: String?, body: String, missed: Bool = false) {
         let content = UNMutableNotificationContent()
-        content.title = missed ? "Missed call from Claude" : "Claude needs your answer"
+        content.title = missed ? "Missed call from Psyclaupse" : "Claude needs your answer"
         content.body = body
         content.sound = .default
         content.categoryIdentifier = Self.category
@@ -77,7 +77,7 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         lock.unlock()
         setCategories()
         let content = UNMutableNotificationContent()
-        content.title = missed ? "Missed call from Claude" : "Claude has a question"
+        content.title = missed ? "Missed call from Psyclaupse" : "Claude has a question"
         content.body = body
         content.sound = .default
         content.categoryIdentifier = Self.questionCategory

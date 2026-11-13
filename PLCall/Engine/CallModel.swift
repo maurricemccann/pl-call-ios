@@ -478,7 +478,7 @@ struct Turn: Identifiable, Equatable {
             try? await Task.sleep(for: .seconds(Double(minutes) * 60))
             guard !Task.isCancelled, !self.isInCall, self.pendingAsk == nil, self.hasConfig,
                   UIApplication.shared.applicationState != .active else { return }
-            if let refused = await self.ringNow("Claude is waiting") {
+            if let refused = await self.ringNow("Psyclaupse is waiting") {
                 self.lastError = "The ring was refused: \(refused)"
             }
         }
@@ -818,7 +818,7 @@ struct Turn: Identifiable, Equatable {
         } else if isInCall {
             // on hold for a real call: read when he comes back
         } else if UIApplication.shared.applicationState != .active {
-            let reason = "Claude needs you"
+            let reason = "Psyclaupse needs you"
             Task {
                 if let refused = await self.ringNow(reason) { self.lastError = "The ring was refused: \(refused)" }
             }

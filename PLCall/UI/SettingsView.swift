@@ -145,12 +145,12 @@ struct SettingsView: View {
                 Section {
                     toggleRow("Stay reachable", "With no call up, Call keeps a quiet line open in the background, so Claude can ring you for an approval or a question. Uses some battery.", isOn: reach)
                     Button {
-                        Task { contactNote = await ClaudeContact.add() ?? "Added. Calls with Claude now show the card in Recents." }
+                        Task { contactNote = await ClaudeContact.add() ?? "Added. Calls now show Psyclaupse in Recents." }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Add Claude to Contacts")
+                            Text("Add Psyclaupse to Contacts")
                                 .plFont(.body)
-                            Text(contactNote ?? "So Recents and the ring show Claude with the heart mark, not an unknown caller.")
+                            Text(contactNote ?? "So Recents and the ring show Psyclaupse with the heart mark, not an unknown caller.")
                                 .plFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
