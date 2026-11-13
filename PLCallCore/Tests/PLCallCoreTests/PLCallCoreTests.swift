@@ -46,14 +46,14 @@ final class SSEParserTests: XCTestCase {
 }
 
 final class ReducerTests: XCTestCase {
-    func testSpeaksTheLatestWordsAtTurnEnd() {
+    func testSpeaksEveryWordOfTheTurnAtTurnEnd() {
         var r = EventReducer(lastSeq: 10)
         r.sent()
         XCTAssertEqual(r.ingest(SessionEvent(sequenceNum: 11, role: "assistant", text: "Working on it.")), [])
         XCTAssertEqual(r.ingest(SessionEvent(sequenceNum: 12, role: "assistant", text: "Done, the file is fixed.")), [])
-        XCTAssertEqual(r.ingest(SessionEvent(sequenceNum: 13, type: "result")),
-                       [.transcript("Done, the file is fixed."), .speak("Done, the file is fixed.")])
-        XCTAssertEqual(r.lastSaid, "Done, the file is fixed.")
+        let whole = "Working on it.\n\nDone, the file is fixed."
+        XCTAssertEqual(r.ingest(SessionEvent(sequenceNum: 13, type: "result")), [.transcript(whole), .speak(whole)])
+        XCTAssertEqual(r.lastSaid, whole)
         XCTAssertFalse(r.waiting)
     }
 

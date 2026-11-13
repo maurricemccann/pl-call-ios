@@ -88,7 +88,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var onHold = false           // a real call has Claude on hold
     @ObservationIgnored private var spokenAsk: String?       // the ask already read out, so it is not read again
     @ObservationIgnored private var lockLine = ""            // the last thing said by either side, for the Lock Screen
-    @ObservationIgnored private var interimSpoken = ""       // a progress line already said, so the turn end does not repeat it
+    @ObservationIgnored private var spokenParts: [String] = []   // progress lines already said and shown, so the turn end does not repeat them
 
     private enum Say {
         static let load = "Load your config"
@@ -127,7 +127,7 @@ struct Turn: Identifiable, Equatable {
         wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
         stayReachable = UserDefaults.standard.object(forKey: Keys.reach) as? Bool ?? true
         chosenSession = UserDefaults.standard.string(forKey: Keys.session)
-        shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? true
+        shortAnswers = UserDefaults.standard.object(forKey: Keys.short) as? Bool ?? false   // off: he hears everything (his report 11-12)
         wire()
         let center = NotificationCenter.default
         _ = center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
@@ -858,29 +858,29 @@ struct Turn: Identifiable, Equatable {
                 try? await Task.sleep(for: .seconds(2.5))
                 guard !Task.isCancelled, self.isInCall, self.awaitingReply, self.pendingAsk == nil,
                       !self.speaker.isSpeaking, self.state != .hearing else { return }
-                self.interimSpoken = words
+                self.spokenParts.append(words)
                 self.append(.claude, words)
-                let brief = SpokenText.make(words).sentences.prefix(2).joined(separator: " ")
-                self.lockLine = "Claude: " + brief
+                self.lockLine = "Claude: " + SpokenText.make(words).sentences.joined(separator: " ")
                 self.set(.speaking, Say.speaking)
-                self.speaker.speak(brief, voiceID: self.voiceID, line: self.line)
+                self.speaker.speak(words, voiceID: self.voiceID, line: self.line)
             }
         }
         for output in outputs {
             switch output {
             case .transcript(let text):
-                if text.trimmingCharacters(in: .whitespacesAndNewlines) != interimSpoken { append(.claude, text) }
+                let rest = notYetSaid(text)
+                if !rest.isEmpty { append(.claude, rest) }
             case .speak(let text):
                 interimTask?.cancel()
                 awaitingReply = false
                 isClaudeTyping = false
-                if text.trimmingCharacters(in: .whitespacesAndNewlines) == interimSpoken {
-                    interimSpoken = ""
-                    if !speaker.isSpeaking { rest() }   // it was already said as a progress line
+                let rest = notYetSaid(text)
+                spokenParts = []
+                if rest.isEmpty {
+                    if !speaker.isSpeaking { self.rest() }   // all of it was already said as progress lines
                     continue
                 }
-                interimSpoken = ""
-                if state == .hearing { heldReply = text } else { say(text) }   // never talk over him mid-sentence
+                if state == .hearing { heldReply = rest } else { say(rest) }   // never talk over him mid-sentence
             case .ask(let ask):
                 awaitingReply = false
                 isClaudeTyping = false
@@ -1132,6 +1132,13 @@ struct Turn: Identifiable, Equatable {
         guard Date() < awakeUntil else { return nil }
         awakeUntil = Date().addingTimeInterval(20)
         return text
+    }
+
+    /// The turn's text minus the progress lines already said and shown.
+    private func notYetSaid(_ text: String) -> String {
+        var left = text
+        for part in spokenParts { left = left.replacingOccurrences(of: part, with: "") }
+        return left.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func hasWords(_ text: String) -> Bool {
@@ -1402,7 +1409,7 @@ struct Turn: Identifiable, Equatable {
         armedReply = nil
         heldReply = nil
         interimTask?.cancel()
-        interimSpoken = ""
+        spokenParts = []
         onHold = false
         lockLine = ""
         micLevel = 0

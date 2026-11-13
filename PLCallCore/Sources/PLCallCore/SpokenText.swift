@@ -10,7 +10,7 @@ public enum SpokenText {
 
     public static let restOnScreen = "The rest is on the screen."
 
-    public static func make(_ text: String, limit: Int = 1500) -> Result {
+    public static func make(_ text: String, limit: Int = 8000) -> Result {
         var skipped = false
         var lines: [String] = []
         var inCode = false

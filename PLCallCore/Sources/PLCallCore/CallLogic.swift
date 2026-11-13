@@ -58,7 +58,7 @@ public struct EventReducer: Sendable {
             return [.ask(.permission(requestId: rid, toolUseId: e.toolUseId, forWhat: p.forWhat, what: p.what))]
         }
         let text = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if e.role == "assistant", !text.isEmpty { reply = e.text ?? "" }
+        if e.role == "assistant", !text.isEmpty { reply = reply.isEmpty ? text : reply + "\n\n" + text }
         if waiting, e.type == "result" || e.isTurnEnd == true {
             waiting = false
             let t = reply.isEmpty ? "Done." : reply
