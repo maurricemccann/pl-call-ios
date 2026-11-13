@@ -161,6 +161,16 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
+                        HandbookView()
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .principal) { title("Handbook") }
+                            }
+                    } label: {
+                        Text("Handbook")
+                            .plFont(.body)
+                    }
+                    NavigationLink {
                         ProbeView(probe: model.probe)
                     } label: {
                         Text("Capability probe")
