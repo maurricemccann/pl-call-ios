@@ -158,7 +158,7 @@ actor SpeechListener {
     private var pauseTask: Task<Void, Never>?
     private var finalized = ""
     private var volatile = ""
-    private var consumedThrough = CMTime.zero   // results that start before this were already used or thrown away
+    private var consumedThrough = CMTime.zero   // results that end before this were already used or thrown away
     private var endOfTurn = 0.9
     private var endOfTurnInterim = 1.6
 
@@ -213,7 +213,7 @@ actor SpeechListener {
         resultsTask = Task.detached { [weak self] in
             do {
                 for try await result in transcriber.results {
-                    await self?.took(String(result.text.characters), isFinal: result.isFinal, start: result.range.start)
+                    await self?.took(String(result.text.characters), isFinal: result.isFinal, end: result.range.end)
                 }
             } catch {
                 // a stop cancels this task; anything else (a CancellationError included) means the analyzer finished on an error
@@ -261,8 +261,10 @@ actor SpeechListener {
         try? await analyzer?.finalize(through: nil)
     }
 
-    private func took(_ text: String, isFinal: Bool, start: CMTime) {
-        guard CMTimeCompare(start, consumedThrough) >= 0 else { return }
+    /// A result is dropped only when ALL of it lies before the cut. Judging by its start threw away the first words
+    /// of a turn whenever the transcriber's segment had begun before the cut (build 4: clipped sentence starts).
+    private func took(_ text: String, isFinal: Bool, end: CMTime) {
+        guard CMTimeCompare(end, consumedThrough) > 0 else { return }
         let piece = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if isFinal {
             finalized = Self.join(finalized, piece)

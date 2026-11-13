@@ -8,6 +8,7 @@ struct CallActivityAttributes: ActivityAttributes {
         var line: String       // the last line said
         var askID: String?     // set while a permission or a question waits
         var askText: String?   // what is being asked, one or two lines
+        var push: Bool?        // PUSH mode: the Lock Screen shows a Talk button
     }
 
     var title: String

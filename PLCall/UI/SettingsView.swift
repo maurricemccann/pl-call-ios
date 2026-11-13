@@ -5,6 +5,8 @@ struct SettingsView: View {
     let model: CallModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmForget = false
+    @AppStorage(VoiceTuning.rateKey) private var voiceRate = VoiceTuning.defaultRate
+    @AppStorage(VoiceTuning.pitchKey) private var voicePitch = VoiceTuning.defaultPitch
 
     // explicit: a view with private state must not depend on the synthesized initializer staying internal
     init(model: CallModel) { self.model = model }
@@ -21,6 +23,26 @@ struct SettingsView: View {
 
     private var handsFree: Binding<Bool> {
         Binding(get: { model.handsFree }, set: { model.setHandsFree($0) })
+    }
+
+    private var cues: Binding<Bool> {
+        Binding(get: { model.spokenCues }, set: { model.setSpokenCues($0) })
+    }
+
+    private var music: Binding<Bool> {
+        Binding(get: { model.musicMode }, set: { model.setMusicMode($0) })
+    }
+
+    private func toggleRow(_ title: String, _ detail: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .plFont(.body)
+                Text(detail)
+                    .plFont(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     var body: some View {
@@ -45,6 +67,42 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+
+                Section {
+                    toggleRow("Cues", "A tone before Claude talks, \u{201C}Listening\u{201D} when it is your turn, \u{201C}Got it\u{201D} when your words are sent.", isOn: cues)
+                    toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
+                }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Pace")
+                            .plFont(.body)
+                        Slider(value: $voiceRate, in: VoiceTuning.rateRange) {
+                            Text("Pace")
+                        } minimumValueLabel: {
+                            Image(systemName: "tortoise.fill").accessibilityHidden(true)
+                        } maximumValueLabel: {
+                            Image(systemName: "hare.fill").accessibilityHidden(true)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Pitch")
+                            .plFont(.body)
+                        Slider(value: $voicePitch, in: VoiceTuning.pitchRange) {
+                            Text("Pitch")
+                        }
+                    }
+                    Button {
+                        model.previewVoice(Speaker.phone)
+                    } label: {
+                        Text("Hear it")
+                            .plFont(.body)
+                            .frame(minHeight: 28)
+                    }
+                } header: {
+                    Text("iPhone voice")
+                        .plFont(.footnote)
                 }
 
                 Section {

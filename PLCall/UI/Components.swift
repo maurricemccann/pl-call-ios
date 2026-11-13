@@ -9,10 +9,12 @@ struct Backdrop: View {
         ZStack {
             Color.black
             if !reduceTransparency {
+                RadialGradient(colors: [T.orange.opacity(0.20), .clear], center: .top, startRadius: 0, endRadius: 440)
+                // the tile is black ink on clear: on a dark screen it is drawn as pale ink, faint, as on the R1
                 Image("Backdrop")
+                    .renderingMode(.template)
                     .resizable(resizingMode: .tile)
-                    .opacity(contrast == .increased ? 0.5 : 1)
-                Color.black.opacity(contrast == .increased ? 0.8 : 0.6)
+                    .foregroundStyle(Color.white.opacity(contrast == .increased ? 0.06 : 0.15))
             }
         }
         .ignoresSafeArea()

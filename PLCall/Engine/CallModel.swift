@@ -25,6 +25,8 @@ struct Turn: Identifiable, Equatable {
     var turns: [Turn] = []
     var isInCall = false
     var handsFree = true
+    var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
+    var musicMode = false                // no phone-style call: other audio keeps playing
     var voices: [PLCallConfig.Voice] = []
     var voiceID = Speaker.phone
     var quickReplies: [PLCallConfig.QuickReply] = []
@@ -82,10 +84,14 @@ struct Turn: Identifiable, Equatable {
         static let voice = "plcall.voice"
         static let handsFree = "plcall.handsFree"
         static let systemFont = "plcall.usesSystemFont"
+        static let cues = "plcall.spokenCues"
+        static let music = "plcall.musicMode"
     }
 
     private init() {
         handsFree = UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool ?? true
+        spokenCues = UserDefaults.standard.object(forKey: Keys.cues) as? Bool ?? true
+        musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         wire()
         activity.endStale()
         loading = Task { await self.restore() }
@@ -186,7 +192,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             guard self.isInCall else { return }
-            self.callKit.startCall()
+            if self.musicMode { self.startInMusicMode() } else { self.callKit.startCall() }
             _ = await NotificationHub.shared.authorize()   // after the call is up, so a pending prompt never holds the call back
         }
     }
@@ -222,7 +228,10 @@ struct Turn: Identifiable, Equatable {
         let listener = self.listener
         Task {
             await listener.discard()
-            if self.pendingAsk == nil, self.isInCall { self.set(.listening, Say.listening) }
+            guard self.pendingAsk == nil, self.isInCall else { return }
+            let fresh = self.state != .listening
+            self.set(.listening, Say.listening)
+            if fresh, self.spokenCues { self.speaker.cue("Listening") }
         }
     }
 
@@ -313,6 +322,18 @@ struct Turn: Identifiable, Equatable {
         armed = false
         updateGate()
         if isInCall, !speaker.isSpeaking, state != .hearing { rest() }
+        publish()   // the Lock Screen shows or hides its Talk button
+    }
+
+    func setSpokenCues(_ on: Bool) {
+        spokenCues = on
+        UserDefaults.standard.set(on, forKey: Keys.cues)
+    }
+
+    /// Takes effect at the next call.
+    func setMusicMode(_ on: Bool) {
+        musicMode = on
+        UserDefaults.standard.set(on, forKey: Keys.music)
     }
 
     // MARK: called by the other engine parts
@@ -534,7 +555,7 @@ struct Turn: Identifiable, Equatable {
         pendingAsk = ask
         switch ask {
         case .permission(let requestID, let toolUseID, let forWhat, let what):
-            let line = forWhat + " Say approve or deny."
+            let line = forWhat + " Say yes or no."
             append(.claude, what.isEmpty ? line : line + "\n" + what)
             NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat)
             head.start()
@@ -547,7 +568,7 @@ struct Turn: Identifiable, Equatable {
         statusLine = Say.waiting
         publish(alert: true)
         if isInCall {
-            speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line)
+            speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: spokenCues)
         } else if UIApplication.shared.applicationState != .active {
             let reason = askText ?? Say.title
             Task {
@@ -559,7 +580,7 @@ struct Turn: Identifiable, Equatable {
     private func spokenLine(for ask: Ask) -> String {
         switch ask {
         case .permission(_, _, let forWhat, _):
-            return forWhat + " Say approve or deny."
+            return forWhat + " Say yes or no."
         case .question(_, _, let question, _):
             let options = question.options.enumerated().map { "Option \($0.offset + 1): \($0.element)." }.joined(separator: " ")
             return question.question + " " + options
@@ -584,10 +605,19 @@ struct Turn: Identifiable, Equatable {
         case .permission:
             if let allow = SpokenAnswer.decision(text) {
                 answerPermission(allow: allow, message: nil)
-            } else if isInCall {
-                speaker.speak("I did not catch that. Say approve or deny.", voiceID: voiceID, line: line)
-            } else {
-                statusLine = "Press Approve or Deny."
+                return
+            }
+            Task {
+                // the plain word match could not tell: the on-device model reads a loose answer, and doubt stays unclear
+                let judged = await OnDeviceJudge.decision(text)
+                guard self.pendingAsk == ask else { return }
+                if let judged {
+                    self.answerPermission(allow: judged, message: nil)
+                } else if self.isInCall {
+                    self.speaker.speak("I did not catch that. Say yes or no.", voiceID: self.voiceID, line: self.line)
+                } else {
+                    self.statusLine = "Press Approve or Deny."
+                }
             }
         case .question(_, _, let question, _):
             if let index = SpokenAnswer.option(text, of: question) {
@@ -616,16 +646,24 @@ struct Turn: Identifiable, Equatable {
         case .level(let level):
             probe.micHeard(level, inBackground: UIApplication.shared.applicationState != .active)
             micLevel = (state == .listening || state == .hearing) ? level : 0
-        case .hearing(let text):
+        case .hearing(let raw):
+            let text = speaker.withoutCue(raw)
+            guard Self.hasWords(text) else { return }   // noise comes back as a lone "."
             if speaker.isSpeaking {
                 guard isBargeIn(text) else { return }
                 speaker.stop()   // he spoke over the voice: it stops at once
             }
             if state != .hearing { set(.hearing, Say.hearing) }
             statusLine = "Hearing: \(text)"
-        case .turn(let text):
+        case .turn(let raw):
+            let text = Self.tidy(speaker.withoutCue(raw))
+            guard Self.hasWords(text) else {
+                if state == .hearing { rest() }
+                return
+            }
             guard speaker.isSpeaking else {
                 took(text)
+                if spokenCues, awaitingReply, pendingAsk == nil, !speaker.isSpeaking { speaker.cue("Got it") }
                 return
             }
             guard let answer = permissionAnswer(text) else { return }
@@ -639,6 +677,15 @@ struct Turn: Identifiable, Equatable {
                 audioActivated()   // the listener dropped its finished analyzer, so this builds the ears again, once per call
             }
         }
+    }
+
+    private static func hasWords(_ text: String) -> Bool {
+        text.contains { $0.isLetter || $0.isNumber }
+    }
+
+    /// The transcriber sometimes opens a turn with stray punctuation (". yes, I heard").
+    private static func tidy(_ text: String) -> String {
+        String(text.drop { !$0.isLetter && !$0.isNumber })
     }
 
     /// His words minus the words the voice is saying, when a permission waits and they are a clear yes or no; else nil.
@@ -674,10 +721,10 @@ struct Turn: Identifiable, Equatable {
             rest()
             return
         }
-        voice(text)
+        voice(text, tone: spokenCues)
     }
 
-    private func voice(_ text: String, voiceID id: String? = nil) {
+    private func voice(_ text: String, voiceID id: String? = nil, tone: Bool = false) {
         if !isInCall {
             do {
                 try AudioSessionManager.activate()
@@ -687,7 +734,7 @@ struct Turn: Identifiable, Equatable {
             }
         }
         set(.speaking, Say.speaking)
-        speaker.speak(text, voiceID: id ?? voiceID, line: line)
+        speaker.speak(text, voiceID: id ?? voiceID, line: line, tone: tone)
     }
 
     private func spokeDone() {
@@ -711,6 +758,19 @@ struct Turn: Identifiable, Equatable {
     }
 
     // MARK: call lifecycle
+
+    /// Music mode: the session mixes with other audio and no system call is placed, so Apple Music keeps playing.
+    /// The headset buttons are left to the music.
+    private func startInMusicMode() {
+        do {
+            try AudioSessionManager.activate(music: true)
+            ownsAudio = true
+            note("Music mode: your music keeps playing. The iPhone's own microphone listens.")
+            audioActivated()
+        } catch {
+            finishCall("The microphone could not be opened.")
+        }
+    }
 
     private func startWithoutCallKit(_ reason: String) {
         guard isInCall else { return }
@@ -832,7 +892,9 @@ struct Turn: Identifiable, Equatable {
         } else if !isInCall {
             set(.idle, line ?? (hasConfig ? Say.ready : Say.load))
         } else if handsFree || armed {
+            let fresh = state != .listening && state != .hearing
             set(.listening, line ?? Say.listening)
+            if fresh, spokenCues { speaker.cue("Listening") }   // his turn: the mic is open
         } else {
             set(.idle, line ?? Say.pressToTalk)   // PUSH mode between turns: in the call, mic closed
         }
@@ -849,7 +911,7 @@ struct Turn: Identifiable, Equatable {
     private func publish(alert: Bool = false) {
         SharedState.write(state: state, line: statusLine, ask: askText)
         ControlCenter.shared.reloadAllControls()
-        activity.update(state: state, line: statusLine, ask: pendingAsk, alert: alert)
+        activity.update(state: state, line: statusLine, ask: pendingAsk, alert: alert, push: isInCall && !handsFree)
     }
 
     private func append(_ who: Turn.Who, _ text: String) {
@@ -884,7 +946,8 @@ struct Turn: Identifiable, Equatable {
         Item(id: "control", title: "Control Center control", detail: "Waits for the Call control to be pressed.", result: .untested),
         Item(id: "widgetFetch", title: "Widget state", detail: "Checks the store the Lock Screen widget reads.", result: .untested),
         Item(id: "headMotion", title: "Head nod and shake", detail: "Reads AirPods head motion.", result: .untested),
-        Item(id: "incomingCall", title: "Claude rings you", detail: "Rings the phone with a local call.", result: .untested)
+        Item(id: "incomingCall", title: "Claude rings you", detail: "Rings the phone with a local call.", result: .untested),
+        Item(id: "model", title: "On-device model", detail: "Reads a loose yes and a loose no with Apple's model.", result: .untested)
     ]
 
     @ObservationIgnored private var backgroundBuffers = 0
@@ -1029,6 +1092,19 @@ struct Turn: Identifiable, Equatable {
             mark(id, .running, detail: "Ringing. Answer with a nod or the green button, or decline with a shake.")
             await expire(id)
             if isRunning(id) || model.callKit.hasCall { model.callKit.endCall() }
+
+        case "model":
+            guard OnDeviceJudge.isAvailable else {
+                mark(id, .fail(OnDeviceJudge.unavailableReason))
+                return
+            }
+            let yes = await OnDeviceJudge.decision("yeah go for it")
+            let no = await OnDeviceJudge.decision("nah leave that alone")
+            if yes == true, no == false {
+                mark(id, .pass, detail: "It read a loose yes and a loose no correctly.")
+            } else {
+                mark(id, .fail("It answered, but not as expected (yes read as \(String(describing: yes)), no read as \(String(describing: no)))."))
+            }
 
         default:
             mark(id, .fail("There is no such check."))

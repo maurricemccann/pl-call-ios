@@ -1,5 +1,17 @@
 import AVFoundation
 
+/// His own pace and pitch for the iPhone voice (Settings in the app).
+enum VoiceTuning {
+    static let rateKey = "plcall.voiceRate"
+    static let pitchKey = "plcall.voicePitch"
+    static let rateRange: ClosedRange<Double> = 0.38...0.58
+    static let pitchRange: ClosedRange<Double> = 0.80...1.20
+    static let defaultRate = 0.47     // a little under the system default of 0.5: closer to talking than reading
+    static let defaultPitch = 0.97
+    static var rate: Double { (UserDefaults.standard.object(forKey: rateKey) as? Double) ?? defaultRate }
+    static var pitch: Double { (UserDefaults.standard.object(forKey: pitchKey) as? Double) ?? defaultPitch }
+}
+
 /// Claude's voice. "phone" speaks on the iPhone, sentence by sentence with no gap. Any other id is a PC voice,
 /// fetched piece by piece. A PC voice that fails says NOTHING: no other voice ever stands in for it.
 @MainActor final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
@@ -14,6 +26,10 @@ import AVFoundation
     private var player: AVAudioPlayer?
     private var pcTask: Task<Void, Never>?
     private var generation = 0
+    private var tonePlayer: AVAudioPlayer?
+    private var cueWords: [String] = []
+    private var cueUntil = Date.distantPast
+
 
     override init() {
         super.init()
@@ -23,8 +39,9 @@ import AVFoundation
 
     var isSpeaking: Bool { !pending.isEmpty || pcTask != nil }
 
-    func speak(_ text: String, voiceID: String, line: LineClient?) {
+    func speak(_ text: String, voiceID: String, line: LineClient?, tone: Bool = false) {
         stop()
+        if tone { playTone() }
         let sentences = SpokenText.make(text).sentences
         speakingText = sentences.joined(separator: " ")
         if voiceID == Self.phone {
@@ -32,6 +49,10 @@ import AVFoundation
             for sentence in sentences {
                 let utterance = AVSpeechUtterance(string: sentence)
                 utterance.voice = voice
+                utterance.rate = Float(VoiceTuning.rate)
+                utterance.pitchMultiplier = Float(VoiceTuning.pitch)
+                utterance.postUtteranceDelay = 0.10
+                if tone, pending.isEmpty { utterance.preUtteranceDelay = 0.22 }   // the tone plays first
                 pending[ObjectIdentifier(utterance)] = utterance
                 synthesizer.speak(utterance)   // the synthesizer queues them, so there is no gap between sentences
             }
@@ -45,6 +66,77 @@ import AVFoundation
         let id = generation
         pcTask = Task { await self.playFromPC(pieces, voice: voiceID, line: line, id: id) }
     }
+
+    /// A short spoken cue ("Listening", "Got it") in the iPhone voice. Never while an answer is being spoken,
+    /// and it never calls `onFinished`: the delegate ignores utterances that are not in `pending`.
+    func cue(_ words: String) {
+        guard !isSpeaking else { return }
+        let utterance = AVSpeechUtterance(string: words)
+        utterance.voice = Self.bestVoice()
+        utterance.rate = Float(VoiceTuning.rate)
+        utterance.pitchMultiplier = Float(VoiceTuning.pitch)
+        utterance.volume = 0.8
+        cueWords = Self.letters(words)
+        cueUntil = Date().addingTimeInterval(2.5)
+        synthesizer.speak(utterance)
+    }
+
+    /// What he said, minus a cue's own words coming back through the mic at the start (only just after a cue).
+    func withoutCue(_ heard: String) -> String {
+        guard Date() < cueUntil, !cueWords.isEmpty else { return heard }
+        var words = heard.split(separator: " ").map(String.init)
+        var expected = cueWords[...]
+        while let first = words.first, let next = expected.first, Self.letters(first).first == next {
+            words.removeFirst()
+            expected = expected.dropFirst()
+        }
+        return words.joined(separator: " ")
+    }
+
+    private static func letters(_ text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter }.map(String.init)
+    }
+
+    /// A soft two-note tone: Claude is about to talk.
+    private func playTone() {
+        guard let player = try? AVAudioPlayer(data: Self.toneData) else { return }
+        player.volume = 0.5
+        tonePlayer = player
+        _ = player.play()
+    }
+
+    /// 16-bit mono WAV, 24 kHz: 660 Hz then 880 Hz, 80 ms each, with soft edges so it does not click.
+    private static let toneData: Data = {
+        let rate = 24_000.0
+        let notes: [(Double, Double)] = [(660, 0.08), (880, 0.08)]
+        var samples: [Int16] = []
+        for (frequency, seconds) in notes {
+            let count = Int(rate * seconds)
+            for index in 0..<count {
+                let edge = min(1.0, Double(min(index, count - index)) / (rate * 0.012))
+                let value = sin(2 * Double.pi * frequency * Double(index) / rate) * 0.35 * edge
+                samples.append(Int16(value * Double(Int16.max)))
+            }
+        }
+        var data = Data()
+        func put32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        func put16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let bytes = UInt32(samples.count * 2)
+        data.append(contentsOf: Array("RIFF".utf8))
+        put32(36 + bytes)
+        data.append(contentsOf: Array("WAVEfmt ".utf8))
+        put32(16)
+        put16(1)
+        put16(1)
+        put32(UInt32(rate))
+        put32(UInt32(rate) * 2)
+        put16(2)
+        put16(16)
+        data.append(contentsOf: Array("data".utf8))
+        put32(bytes)
+        for sample in samples { put16(UInt16(bitPattern: sample)) }
+        return data
+    }()
 
     /// Barge-in and End: silence at once. Does not call `onFinished`.
     func stop() {

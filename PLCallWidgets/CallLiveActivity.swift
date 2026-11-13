@@ -36,6 +36,8 @@ struct CallLiveActivity: Widget {
                         DetailLine(content: context.state, lines: 2)
                         if context.state.askID != nil {
                             AnswerRow()
+                        } else if context.state.push == true {
+                            TalkButton()
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -84,6 +86,8 @@ struct CallActivityView: View {
             DetailLine(content: content, lines: 2)
             if hasAsk {
                 AnswerRow()
+            } else if content.push == true {
+                TalkButton()
             }
         }
         .padding(14)
@@ -172,6 +176,20 @@ struct AnswerRow: View {
         .font(WidgetStyle.text(14, .footnote, strong: true))
         .lineLimit(1)
         .minimumScaleFactor(0.7)
+    }
+}
+
+/// PUSH mode: opens the mic for one turn from the Lock Screen, with no unlock.
+struct TalkButton: View {
+    var body: some View {
+        Button(intent: TalkIntent()) {
+            Label("Talk", systemImage: "mic.fill")
+                .font(WidgetStyle.text(16, .headline, strong: true))
+                .frame(maxWidth: .infinity, minHeight: 32)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(WidgetStyle.accent)
+        .accessibilityLabel("Talk: open the microphone for one turn")
     }
 }
 

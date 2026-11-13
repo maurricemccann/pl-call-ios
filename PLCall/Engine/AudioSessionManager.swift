@@ -5,14 +5,22 @@ import AVFoundation
 enum AudioSessionManager {
     enum Change: Sendable { case interrupted, resumed, routeChanged, engineReset }
 
-    static func configure() throws {
-        try AVAudioSession.sharedInstance().setCategory(
-            .playAndRecord, mode: .voiceChat,
-            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+    /// `music`: no phone-style call. Other audio keeps playing, headphones stay in full quality (A2DP),
+    /// and the ears are the iPhone's own microphone, because a Bluetooth mic would drop the music to call quality.
+    static func configure(music: Bool = false) throws {
+        if music {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playAndRecord, mode: .default,
+                options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker])
+        } else {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playAndRecord, mode: .voiceChat,
+                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+        }
     }
 
-    static func activate() throws {
-        try configure()
+    static func activate(music: Bool = false) throws {
+        try configure(music: music)
         try AVAudioSession.sharedInstance().setActive(true)
     }
 

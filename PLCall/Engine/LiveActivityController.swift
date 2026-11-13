@@ -17,7 +17,7 @@ import Foundation
     @discardableResult func start(title: String) -> String? {
         guard isAllowed else { return "Live Activities are off for Call in Settings." }
         guard !isLive else { return nil }
-        let state = CallActivityAttributes.ContentState(state: CallState.connecting.rawValue, line: "Connecting", askID: nil, askText: nil)
+        let state = CallActivityAttributes.ContentState(state: CallState.connecting.rawValue, line: "Connecting", askID: nil, askText: nil, push: nil)
         do {
             _ = try Activity<CallActivityAttributes>.request(
                 attributes: CallActivityAttributes(title: title),
@@ -30,7 +30,7 @@ import Foundation
     }
 
     /// `ask` non-nil shows the Approve / Deny buttons, so pass nil the moment it is answered.
-    func update(state: CallState, line: String, ask: Ask?, alert: Bool = false) {
+    func update(state: CallState, line: String, ask: Ask?, alert: Bool = false, push: Bool = false) {
         var askID: String?
         var askText: String?
         switch ask {
@@ -47,7 +47,7 @@ import Foundation
         let shortLine = String(line.prefix(160))   // the whole activity must stay under 4 KB
         let id = askID
         let text = askText
-        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert) }
+        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push) }
     }
 
     func end() {
@@ -74,9 +74,9 @@ import Foundation
 
 /// The async ActivityKit calls, kept off the main actor: `Activity` is not Sendable, so it is fetched and used in one place.
 enum ActivityPush {
-    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool) async {
+    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool, push: Bool) async {
         let content = ActivityContent(
-            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText),
+            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText, push: push),
             staleDate: nil, relevanceScore: alert ? 100 : 50)
         for activity in Activity<CallActivityAttributes>.activities {
             if alert {
