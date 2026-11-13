@@ -324,7 +324,6 @@ struct CallScreen: View {
         .accessibilityLabel(armed ? "\(reply.label). Press again to send" : reply.label)
     }
 
-    @ViewBuilder
     /// A picture or a screenshot from Photos, sent to Claude.
     private var pictureButton: some View {
         PhotosPicker(selection: $picked, matching: .images) {
@@ -347,6 +346,7 @@ struct CallScreen: View {
         }
     }
 
+    @ViewBuilder
     private var talkButton: some View {
         if !model.handsFree && model.isInCall {
             Button {
