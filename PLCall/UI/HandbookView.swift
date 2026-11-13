@@ -29,7 +29,10 @@ struct HandbookView: View {
             Entry(title: "Questions", body: "When Claude asks you to pick, say the option\u{2019}s name or its number.")
         ]),
         Part(title: "When you are not on a call", entries: [
-            Entry(title: "Claude rings you", body: "With Stay reachable on, the phone rings like a call when Claude needs an approval or a question answered. Pick up and the question is read out."),
+            Entry(title: "Claude rings you", body: "With Stay reachable on, the phone rings like a call when Claude needs an approval or a question answered. Pick up and the question is read out. With AirPods, Siri announces it; nod twice to answer, shake twice to decline."),
+            Entry(title: "Declining", body: "On a locked iPhone the system shows only slide to answer. Leave it: after 30 seconds the ring stops and a Missed call from Claude notice appears with the buttons. With the phone unlocked, the ring has a Decline button."),
+            Entry(title: "Answering from the notice or the watch", body: "A question\u{2019}s notice carries its options as buttons, and an approval\u{2019}s carries Approve and Deny. They reach the watch when the phone is locked. The watch\u{2019}s Double Tap presses the first button: Approve, or the first option."),
+            Entry(title: "A real call comes in", body: "During a call with Claude, choose Hold & Accept. Claude goes quiet. When you hang up, it picks up again and reads a waiting question once more. Claude never rings while you are on another call."),
             Entry(title: "When Claude is waiting", body: "After Claude finishes and you have not answered, the phone rings once after the time you pick in Settings. It does not ring while the session keeps moving."),
             Entry(title: "Its limits", body: "Staying reachable uses some battery. If iOS closes the app (low memory, Low Power Mode), nothing can ring until you open Call again.")
         ]),
