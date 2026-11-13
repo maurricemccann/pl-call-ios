@@ -17,6 +17,8 @@ jobs:
       WATCH: build/Release-watchos/PLCallWatch.app
       VERSION: "0.2.${{ github.run_number }}"
       BUILD: "${{ github.run_number }}"
+      # SideStore re-names the phone app with the signing team's suffix; the watch app must name that exact companion.
+      SUFFIX: ${{ secrets.WATCH_SUFFIX }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +48,8 @@ jobs:
         run: |
           if ! xcodebuild -project PLCall.xcodeproj -target PLCallWatch -configuration Release -sdk watchos \
             SYMROOT="$PWD/build" CURRENT_PROJECT_VERSION="$BUILD" MARKETING_VERSION="$VERSION" \
+            PRODUCT_BUNDLE_IDENTIFIER="com.psychedluxuries.call.${SUFFIX}.watchkitapp" \
+            INFOPLIST_KEY_WKCompanionAppBundleIdentifier="com.psychedluxuries.call.${SUFFIX}" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > watch.log 2>&1; then
             echo "===== WATCH BUILD FAILED ====="
             grep -E "error:|BUILD FAILED" watch.log | awk '!seen[$0]++' | head -100
@@ -54,7 +58,8 @@ jobs:
           fi
           tail -n 3 watch.log
           ls "$WATCH"
-          /usr/libexec/PlistBuddy -c "Print :WKCompanionAppBundleIdentifier" "$WATCH/Info.plist"
+          test -n "$SUFFIX" || { echo "The WATCH_SUFFIX secret is not set."; exit 1; }
+          test "$(/usr/libexec/PlistBuddy -c "Print :WKCompanionAppBundleIdentifier" "$WATCH/Info.plist")" = "com.psychedluxuries.call.${SUFFIX}" && echo "companion id set"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$WATCH/Info.plist"
 
       - name: Put the watch app inside the phone app
@@ -80,11 +85,9 @@ jobs:
           zip -qr PLCall-watch.ipa Payload
           ls -l PLCall-watch.ipa
 
-      - name: Publish as a pre-release (the update feed stays on the phone-only build)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "watch-${{ github.run_number }}" PLCall-watch.ipa \
-            --title "Watch experiment ${{ github.run_number }}" \
-            --notes "The phone app with the watch app inside. Unsigned; signed on the phone by SideStore." \
-            --prerelease --latest=false
+      # Kept as a private artifact, not a public release: the file carries the signing team's suffix.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PLCall-watch-ipa
+          path: PLCall-watch.ipa
+          retention-days: 7
