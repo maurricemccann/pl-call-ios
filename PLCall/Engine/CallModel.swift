@@ -89,7 +89,9 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var awakeUntil = Date.distantPast   // wake word mode: no name needed until then
     @ObservationIgnored private var lastSpoke = Date.distantPast    // when the voice last stopped
     @ObservationIgnored private var lastHearingPublish = Date.distantPast
-    @ObservationIgnored private var onHold = false           // a real call has Claude on hold
+    @ObservationIgnored private var onHold = false
+    @ObservationIgnored private var connectedOnce = false    // the mic started at least once in this call
+    @ObservationIgnored private var micRetries = 0           // a real call has Claude on hold
     @ObservationIgnored private var spokenAsk: String?       // the ask already read out, so it is not read again
     @ObservationIgnored private var lockLine = ""            // the last thing said by either side, for the Lock Screen
     @ObservationIgnored private var spokenParts: [String] = []   // progress lines already said and shown, so the turn end does not repeat them
@@ -274,6 +276,11 @@ struct Turn: Identifiable, Equatable {
     /// PUSH mode, the headset press and the Talk button: stop the voice and take one turn.
     func talk() {
         heardFromHim()
+        if isInCall, state == .lost, micRetries > 8 {
+            micRetries = 0
+            audioActivated()
+            return
+        }
         if callKit.isRinging {
             callKit.answerRing()
             return
@@ -551,6 +558,7 @@ struct Turn: Identifiable, Equatable {
     /// A real call put Claude on hold: stop talking and listening. Coming back, the audio returns through CallKit.
     private func heldByOtherCall(_ held: Bool) {
         guard isInCall else { return }
+        RingLog.note(held ? "on hold for another call" : "back from the other call")
         if held {
             onHold = true
             speaker.stop()
@@ -1365,6 +1373,20 @@ struct Turn: Identifiable, Equatable {
                     try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
                 }
             } catch {
+                RingLog.note("mic did not start: \(plainSentence(error))")
+                if self.connectedOnce {
+                    // Back from a hold or an interruption: a real call can hold the audio for a few seconds after it
+                    // ends. Never drop the call for that (his report 11-12: "when that call ended both calls dropped").
+                    self.set(.lost, "Getting the mic back")
+                    self.micRetries += 1
+                    if self.micRetries <= 8 {
+                        try? await Task.sleep(for: .seconds(2))
+                        if self.isInCall { self.audioActivated() }
+                    } else {
+                        self.set(.lost, "The mic did not come back. Press Talk to try again")
+                    }
+                    return
+                }
                 self.finishCall(plainSentence(error))
                 if self.callKit.hasCall { self.callKit.endCall() }
                 return
@@ -1373,6 +1395,8 @@ struct Turn: Identifiable, Equatable {
                 await listener.stop()
                 return
             }
+            self.connectedOnce = true
+            self.micRetries = 0
             self.callKit.reportConnected()
             if self.idleWatch == nil { self.watchForSleep() }
             self.matchProximityToRoute()
@@ -1464,6 +1488,7 @@ struct Turn: Identifiable, Equatable {
 
     private func finishCall(_ message: String? = nil) {
         guard isInCall else { return }
+        RingLog.note("call ended" + (message.map { ": " + $0 } ?? ""))
         isInCall = false
         isMuted = false
         armed = false
@@ -1472,6 +1497,8 @@ struct Turn: Identifiable, Equatable {
         heldReply = nil
         interimTask?.cancel()
         spokenParts = []
+        connectedOnce = false
+        micRetries = 0
         idleWatch?.cancel()
         idleWatch = nil
         onHold = false
