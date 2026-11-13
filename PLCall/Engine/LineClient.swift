@@ -115,6 +115,15 @@ actor LineClient {
         _ = try await fetch("rc/api/sessions/\(Self.safe(sid))/dialog", method: "POST", body: body, timeout: 30)
     }
 
+    /// A picture to the PC's private inbox. Returns the file's path on the PC, for Claude to open.
+    func upload(jpeg: Data) async throws -> String {
+        let data = try await fetch("upload", method: "POST", body: jpeg, timeout: 60)
+        guard let path = (try? JSONDecoder().decode(JSONValue.self, from: data))?["path"]?.string, !path.isEmpty else {
+            throw PlainError(message: "The PC did not keep the picture.")
+        }
+        return path
+    }
+
     /// One piece of speech from a PC voice, as WAV. The slowest voice takes about 10 s a sentence.
     func tts(text: String, voice: String) async throws -> Data {
         let body = try JSONEncoder().encode(["text": text, "voice": voice])
@@ -185,7 +194,7 @@ actor LineClient {
         request.setValue(key, forHTTPHeaderField: "X-Call-Key")
         if let body {
             request.httpBody = body
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(body.starts(with: [0xFF, 0xD8, 0xFF]) ? "image/jpeg" : "application/json", forHTTPHeaderField: "Content-Type")
         }
         return request
     }

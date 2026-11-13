@@ -103,6 +103,17 @@ enum VoiceTuning {
         text.lowercased().split { !$0.isLetter }.map(String.init)
     }
 
+    enum Chime { case connected, ended }
+
+    /// The call connecting (rising) or ending (falling), like a phone call's own sounds.
+    func chime(_ kind: Chime) {
+        let notes: [(Double, Double)] = kind == .connected ? [(523, 0.07), (659, 0.07), (784, 0.11)] : [(659, 0.09), (523, 0.09), (392, 0.14)]
+        guard let player = try? AVAudioPlayer(data: Self.wav(notes)) else { return }
+        player.volume = 0.45
+        tonePlayer = player
+        _ = player.play()
+    }
+
     /// A soft two-note tone: Claude is about to talk.
     private func playTone() {
         guard let player = try? AVAudioPlayer(data: Self.toneData) else { return }
@@ -112,9 +123,11 @@ enum VoiceTuning {
     }
 
     /// 16-bit mono WAV, 24 kHz: 660 Hz then 880 Hz, 80 ms each, with soft edges so it does not click.
-    private static let toneData: Data = {
+    private static let toneData: Data = wav([(660, 0.08), (880, 0.08)])
+
+    /// 16-bit mono WAV at 24 kHz from (frequency, seconds) notes, each with soft edges so it does not click.
+    private static func wav(_ notes: [(Double, Double)]) -> Data {
         let rate = 24_000.0
-        let notes: [(Double, Double)] = [(660, 0.08), (880, 0.08)]
         var samples: [Int16] = []
         for (frequency, seconds) in notes {
             let count = Int(rate * seconds)
@@ -142,7 +155,7 @@ enum VoiceTuning {
         put32(bytes)
         for sample in samples { put16(UInt16(bitPattern: sample)) }
         return data
-    }()
+    }
 
     /// Barge-in and End: silence at once. Does not call `onFinished`.
     func stop() {

@@ -1,4 +1,5 @@
 import Accessibility
+import PhotosUI
 import SwiftUI
 
 /// The call screen, twin of the R1 Call: REPLAY, Claude's avatar and name pill, the voice picker; the transcript;
@@ -14,6 +15,7 @@ struct CallScreen: View {
     }
 
     @State private var panel: Panel? = nil
+    @State private var picked: PhotosPickerItem?
     @AppStorage("plcall.edgeLight") private var edgeLight = false
     @State private var selectTick = 0
     @State private var connectTick = 0
@@ -203,6 +205,7 @@ struct CallScreen: View {
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
+                            pictureButton
                             talkButton
                             callButton
                         }
@@ -211,6 +214,7 @@ struct CallScreen: View {
                     HStack(spacing: T.gap) {
                         modeSwitch
                         quickReplies
+                        pictureButton
                         talkButton
                         callButton
                     }
@@ -321,6 +325,28 @@ struct CallScreen: View {
     }
 
     @ViewBuilder
+    /// A picture or a screenshot from Photos, sent to Claude.
+    private var pictureButton: some View {
+        PhotosPicker(selection: $picked, matching: .images) {
+            Image(systemName: "photo.on.rectangle")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: T.touch, height: T.touch)
+                .contentShape(Circle())
+        }
+        .glassControl(in: Circle())
+        .accessibilityLabel("Send Claude a picture")
+        .onChange(of: picked) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    selectTick += 1
+                    model.sendPicture(image)
+                }
+                picked = nil
+            }
+        }
+    }
+
     private var talkButton: some View {
         if !model.handsFree && model.isInCall {
             Button {

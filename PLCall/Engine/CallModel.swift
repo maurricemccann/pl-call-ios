@@ -299,6 +299,31 @@ struct Turn: Identifiable, Equatable {
         }
     }
 
+    /// A picture or a screenshot: it goes to the PC's inbox, then the session is told where it is so Claude can look.
+    func sendPicture(_ image: UIImage, note: String? = nil) {
+        guard let line, hasConfig else { return }
+        let scaled = Self.shrink(image, longest: 2048)
+        guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else { return }
+        append(.system, "Sending a picture")
+        Task {
+            do {
+                let path = try await line.upload(jpeg: jpeg)
+                let words = (note?.isEmpty == false ? note! + " " : "") + "I sent you a picture. It is at \(path). Open it and look."
+                self.took(words)
+            } catch {
+                self.note("The picture did not send: \(plainSentence(error))")
+            }
+        }
+    }
+
+    private static func shrink(_ image: UIImage, longest: CGFloat) -> UIImage {
+        let size = image.size
+        let scale = min(1, longest / max(size.width, size.height))
+        guard scale < 1 else { return image }
+        let target = CGSize(width: size.width * scale, height: size.height * scale)
+        return UIGraphicsImageRenderer(size: target).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
     /// Typed text and quick replies go down the same road as his voice.
     func send(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1161,6 +1186,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             self.callKit.reportConnected()
+            if self.state == .connecting { self.speaker.chime(.connected) }
             guard self.state == .connecting || self.state == .lost else { return }
             self.rest()
             if let ask = self.pendingAsk, self.spokenAsk != Self.id(of: ask) {
@@ -1236,6 +1262,7 @@ struct Turn: Identifiable, Equatable {
         lockLine = ""
         micLevel = 0
         speaker.stop()
+        speaker.chime(.ended)
         remote.disable()
         let listener = self.listener
         let releaseAudio = ownsAudio

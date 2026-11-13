@@ -20,6 +20,7 @@ struct HandbookView: View {
             Entry(title: "AUTO and PUSH", body: "AUTO listens all the time. PUSH opens the mic only when you press Talk, in the app or on the Lock Screen."),
             Entry(title: "Cues", body: "A short tone means Claude is about to talk. \u{201C}Listening\u{201D} means it is your turn. \u{201C}Got it\u{201D} means your words were sent. \u{201C}Line dropped\u{201D} means the PC stopped answering."),
             Entry(title: "The pause", body: "Your words are sent after you go quiet. Settings sets how long it waits, from 1 to 4 seconds. Longer lets you stop and think mid-sentence."),
+            Entry(title: "Send a picture", body: "Press the picture button and pick a photo or a screenshot. It goes to your PC and Claude is told where it is, so it can look. Pictures are kept on the PC for 7 days."),
             Entry(title: "Voice commands", body: "Say only \u{201C}stop\u{201D} while Claude talks to cut it off. \u{201C}Say that again\u{201D}, \u{201C}slower\u{201D}, \u{201C}faster\u{201D} and \u{201C}end the call\u{201D} work any time. A sentence that merely contains these words goes to Claude as normal."),
             Entry(title: "Wake word", body: "Optional, in Settings. The mic stays open, but only what you say after \u{201C}Claude\u{201D} is sent, plus follow-ups within 20 seconds. Useful with other people or a TV in the room.")
         ]),
