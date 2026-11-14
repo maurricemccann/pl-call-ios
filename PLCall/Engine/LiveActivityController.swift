@@ -33,6 +33,7 @@ import Foundation
     func update(state: CallState, line: String, ask: Ask?, alert: Bool = false, push: Bool = false, heard: String? = nil) {
         var askID: String?
         var askText: String?
+        var options: [String]?
         switch ask {
         case .permission(let requestID, _, let forWhat, _)?:
             askID = requestID
@@ -40,6 +41,7 @@ import Foundation
         case .question(_, _, let question, _)?:
             // no askID: the Lock Screen buttons answer permissions only, so a question shows its text and is answered in the app or aloud
             askText = String(question.question.prefix(240))
+            options = question.options.prefix(4).map { String($0.prefix(24)) }   // 11-14: answer a question from the watch Smart Stack
         case nil:
             break
         }
@@ -48,7 +50,8 @@ import Foundation
         let id = askID
         let text = askText
         let said = heard.map { String($0.prefix(180)) }
-        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push, heard: said) }
+        let choices = options
+        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push, heard: said, options: choices) }
     }
 
     func end() {
@@ -75,9 +78,9 @@ import Foundation
 
 /// The async ActivityKit calls, kept off the main actor: `Activity` is not Sendable, so it is fetched and used in one place.
 enum ActivityPush {
-    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool, push: Bool, heard: String?) async {
+    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool, push: Bool, heard: String?, options: [String]? = nil) async {
         let content = ActivityContent(
-            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText, push: push, heard: heard),
+            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText, push: push, heard: heard, options: options),
             staleDate: nil, relevanceScore: alert ? 100 : 50)
         for activity in Activity<CallActivityAttributes>.activities {
             if alert {

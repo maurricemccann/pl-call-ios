@@ -930,6 +930,10 @@ struct Turn: Identifiable, Equatable {
             self?.probe.sawIntent()
             self?.stopTalking()
         }
+        IntentBridge.option = { [weak self] index in
+            self?.probe.sawIntent()
+            self?.answerQuestion(option: index)
+        }
         IntentBridge.heard = { [weak self] yes in
             self?.probe.sawIntent()
             self?.answerHeard(yes: yes)

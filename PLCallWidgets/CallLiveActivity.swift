@@ -37,6 +37,8 @@ struct CallLiveActivity: Widget {
                         DetailLine(content: context.state, lines: 2)
                         if context.state.heard != nil {
                             HeardRow()
+                        } else if let options = context.state.options, !options.isEmpty {
+                            OptionsRow(options: options)
                         } else if context.state.askID != nil {
                             AnswerRow()
                         } else if context.state.state == "speaking" {
@@ -69,6 +71,7 @@ struct CallActivityView: View {
     private var state: CallState { WidgetStyle.state(content.state) }
     private var hasAsk: Bool { content.askID != nil }
     private var hasHeard: Bool { content.heard != nil }
+    private var hasOptions: Bool { !hasAsk && !hasHeard && !(content.options ?? []).isEmpty }
 
     var body: some View {
         if family == .small {
@@ -96,9 +99,11 @@ struct CallActivityView: View {
                 }
                 EndButton(compact: false, tinted: false)
             }
-            DetailLine(content: content, lines: hasAsk || hasHeard ? 2 : 3)
+            DetailLine(content: content, lines: hasAsk || hasHeard || hasOptions ? 2 : 3)
             if hasHeard {
                 HeardRow()
+            } else if hasOptions, let options = content.options {
+                OptionsRow(options: options)
             } else if hasAsk {
                 AnswerRow()
             }
@@ -125,6 +130,18 @@ struct CallActivityView: View {
                     .tint(WidgetStyle.accent)
                     Button(intent: HeardAgainIntent()) {
                         Text("Again")
+                    }
+                }
+                .font(WidgetStyle.text(14, .footnote, strong: true))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            } else if hasOptions, let options = content.options {
+                HStack(spacing: 6) {
+                    ForEach(Array(options.prefix(2).enumerated()), id: \.offset) { index, name in
+                        Button(intent: AnswerOptionIntent(index: index)) {
+                            Text(name)
+                        }
+                        .tint(index == 0 ? WidgetStyle.accent : nil)
                     }
                 }
                 .font(WidgetStyle.text(14, .footnote, strong: true))
@@ -205,6 +222,33 @@ struct AnswerRow: View {
         .font(WidgetStyle.text(14, .footnote, strong: true))
         .lineLimit(1)
         .minimumScaleFactor(0.7)
+    }
+}
+
+/// A question's answers as buttons (up to 4): the first is prominent. Answerable with the phone locked, and from the watch.
+struct OptionsRow: View {
+    let options: [String]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { index, name in
+                if index == 0 {
+                    Button(intent: AnswerOptionIntent(index: index)) {
+                        Text(name).frame(maxWidth: .infinity, minHeight: 28)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WidgetStyle.accent)
+                } else {
+                    Button(intent: AnswerOptionIntent(index: index)) {
+                        Text(name).frame(maxWidth: .infinity, minHeight: 28)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .font(WidgetStyle.text(14, .footnote, strong: true))
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
     }
 }
 

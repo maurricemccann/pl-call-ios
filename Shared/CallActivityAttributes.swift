@@ -10,6 +10,7 @@ struct CallActivityAttributes: ActivityAttributes {
         var askText: String?   // what is being asked, one or two lines
         var push: Bool?        // PUSH mode: the Lock Screen shows a Talk button
         var heard: String?     // set while "I heard: ..., right?" waits: the Lock Screen and Island show Yes / Again
+        var options: [String]? // a question's answers (up to 4, short): one button each on the Lock Screen, Island and watch Smart Stack
     }
 
     var title: String

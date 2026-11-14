@@ -9,6 +9,7 @@ import Foundation
     static var replay: (() -> Void)?
     static var talk: (() -> Void)?
     static var hush: (() -> Void)?   // 11-14: stop Claude talking from the Lock Screen (his work goes on)
+    static var option: ((Int) -> Void)?   // 11-14: a question's option from the Lock Screen, Island or watch Smart Stack
     static var heard: ((Bool) -> Void)?   // true = Yes, send it; false = Again
 
     /// A control can start the app process cold, so wait up to two seconds for the app to set its hooks.

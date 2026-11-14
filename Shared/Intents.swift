@@ -137,3 +137,24 @@ struct HeardAgainIntent: LiveActivityIntent {
         return .result()
     }
 }
+
+/// A question's answer, tapped on the Lock Screen, the Island or the watch Smart Stack: option `index` of the question that waits.
+struct AnswerOptionIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Answer a Question"
+    static let supportedModes: IntentModes = .background
+    static let isDiscoverable: Bool = false
+
+    @Parameter(title: "Option") var index: Int
+
+    init() {}
+
+    init(index: Int) {
+        self.index = index
+    }
+
+    @MainActor func perform() async throws -> some IntentResult {
+        guard let run = await IntentBridge.whenReady({ IntentBridge.option }) else { throw IntentBridgeError.notReady }
+        run(index)
+        return .result()
+    }
+}
