@@ -89,6 +89,16 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         post(content, identifier: "ask." + requestID)
     }
 
+    /// A plain line with no buttons: a build landed.
+    func postNote(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.threadIdentifier = "psyclaupse.news"
+        post(content, identifier: "note." + UUID().uuidString)
+    }
+
     func postProbe() {
         let content = UNMutableNotificationContent()
         content.title = "Probe"

@@ -11,15 +11,19 @@ public struct SessionEvent: Decodable, Sendable, Equatable {
     public var requestId: String?
     public var toolUseId: String?
     public var permissionRequest: PermissionRequest?
+    public var image: String?     // a picture Claude showed: its path on the PC line, e.g. img/ab12.png
+    public var expired: Bool?     // a permission_answered event: true when the card was cleared, not answered
 
     public init(sequenceNum: Int, role: String? = nil, text: String? = nil, type: String? = nil, isTurnEnd: Bool? = nil,
-                isBlockingControl: Bool? = nil, requestId: String? = nil, toolUseId: String? = nil, permissionRequest: PermissionRequest? = nil) {
+                isBlockingControl: Bool? = nil, requestId: String? = nil, toolUseId: String? = nil, permissionRequest: PermissionRequest? = nil,
+                image: String? = nil, expired: Bool? = nil) {
+        self.image = image; self.expired = expired
         self.sequenceNum = sequenceNum; self.role = role; self.text = text; self.type = type; self.isTurnEnd = isTurnEnd
         self.isBlockingControl = isBlockingControl; self.requestId = requestId; self.toolUseId = toolUseId; self.permissionRequest = permissionRequest
     }
 
     enum CodingKeys: String, CodingKey {
-        case sequenceNum, role, text, type, isTurnEnd, isBlockingControl, requestId, toolUseId, permissionRequest
+        case sequenceNum, role, text, type, isTurnEnd, isBlockingControl, requestId, toolUseId, permissionRequest, image, expired
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,6 +37,8 @@ public struct SessionEvent: Decodable, Sendable, Equatable {
         requestId = try? c.decode(String.self, forKey: .requestId)
         toolUseId = try? c.decode(String.self, forKey: .toolUseId)
         permissionRequest = try? c.decode(PermissionRequest.self, forKey: .permissionRequest)
+        image = try? c.decode(String.self, forKey: .image)
+        expired = try? c.decode(Bool.self, forKey: .expired)
     }
 
     public static func decode(_ json: String) -> SessionEvent? {

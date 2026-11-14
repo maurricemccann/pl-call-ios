@@ -149,6 +149,25 @@ final class AnswerTests: XCTestCase {
     }
 }
 
+final class CallLaneEventTests: XCTestCase {
+    func testPictureAndClearedApprovalEventsDecode() {
+        let pic = SessionEvent.decode(#"{"sequenceNum":4,"role":"assistant","text":"look","image":"img/ab12cd34ef56.png"}"#)
+        XCTAssertEqual(pic?.image, "img/ab12cd34ef56.png")
+        let gone = SessionEvent.decode(#"{"sequenceNum":5,"role":"system","text":"","type":"permission_answered","requestId":"abcde","expired":true}"#)
+        XCTAssertEqual(gone?.type, "permission_answered")
+        XCTAssertEqual(gone?.requestId, "abcde")
+        XCTAssertEqual(gone?.expired, true)
+        XCTAssertNil(SessionEvent.decode(#"{"sequenceNum":6,"role":"user","text":"hi"}"#)?.image)
+    }
+
+    func testAClearedApprovalIsNotAnAskAndMovesTheSequence() {
+        var r = EventReducer(lastSeq: 1)
+        let gone = SessionEvent(sequenceNum: 2, role: "system", text: "", type: "permission_answered", requestId: "abcde", expired: true)
+        XCTAssertEqual(r.ingest(gone), [])
+        XCTAssertEqual(r.lastSeq, 2)
+    }
+}
+
 final class QuickReplyTests: XCTestCase {
     func testArmedRepliesNeedASecondTapInThreeSeconds() {
         var arm = QuickReplyArm()

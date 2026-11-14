@@ -211,6 +211,7 @@ struct CallScreen: View {
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
+                            stopButton
                             audioButton
                             pictureButton
                             talkButton
@@ -226,6 +227,7 @@ struct CallScreen: View {
                         HStack(spacing: T.gap) {
                             modeSwitch
                             Spacer(minLength: 0)
+                            stopButton
                             audioButton
                             pictureButton
                             talkButton
@@ -340,6 +342,25 @@ struct CallScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(armed ? "\(reply.label). Press again to send" : reply.label)
+    }
+
+    /// One tap while Claude is talking: the voice stops now.
+    @ViewBuilder
+    private var stopButton: some View {
+        if model.isInCall, model.state == .speaking {
+            Button {
+                selectTick += 1
+                model.stopTalking()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: T.touch, height: T.touch)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassControl(in: Circle())
+            .accessibilityLabel("Stop Claude talking")
+        }
     }
 
     /// Speaker, the iPhone's earpiece or AirPods, during a call.

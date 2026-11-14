@@ -115,6 +115,21 @@ actor LineClient {
         _ = try await fetch("rc/api/sessions/\(Self.safe(sid))/dialog", method: "POST", body: body, timeout: 30)
     }
 
+    /// The PC's own spoken status ("status") or what is left on the queue ("left"), built from real state, so it answers while the session is busy.
+    func status(_ kind: String) async throws -> String {
+        let data = try await fetch(kind == "left" ? "left" : "status", timeout: 40)
+        guard let text = (try? JSONDecoder().decode(JSONValue.self, from: data))?["text"]?.string, !text.isEmpty else {
+            throw PlainError(message: "The PC sent no status.")
+        }
+        return text
+    }
+
+    /// A picture Claude showed on the call, by its path on the line (img/<name>).
+    func image(path: String) async throws -> Data {
+        guard path.hasPrefix("img/"), !path.contains("..") else { throw PlainError(message: "That is not a picture path.") }
+        return try await fetch(path, timeout: 40)
+    }
+
     /// A picture to the PC's private inbox. Returns the file's path on the PC, for Claude to open.
     func upload(jpeg: Data) async throws -> String {
         let data = try await fetch("upload", method: "POST", body: jpeg, timeout: 60)

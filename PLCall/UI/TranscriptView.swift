@@ -7,6 +7,7 @@ struct TranscriptView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorSchemeContrast) private var contrast
+    @State private var zoomed: ZoomItem?
 
     // explicit: a view with private state must not depend on the synthesized initializer staying internal
     init(model: CallModel) { self.model = model }
@@ -86,6 +87,7 @@ struct TranscriptView: View {
             .onChange(of: model.turns.count) { _, _ in scrollToNewest(proxy) }
             .onChange(of: model.turns.last?.text) { _, _ in scrollToNewest(proxy) }
             .onChange(of: model.isClaudeTyping) { _, _ in scrollToNewest(proxy) }
+            .fullScreenCover(item: $zoomed) { ZoomView(image: $0.image) }
         }
     }
 
@@ -125,7 +127,15 @@ struct TranscriptView: View {
             case .me:
                 bubble(row, mine: true)
             case .claude:
-                bubble(row, mine: false)
+                if let path = row.turn.image {
+                    HStack(spacing: 0) {
+                        TurnPicture(model: model, path: path) { zoomed = ZoomItem(image: $0) }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, row.startsRun ? T.gap : 2)
+                } else {
+                    bubble(row, mine: false)
+                }
             }
         }
     }

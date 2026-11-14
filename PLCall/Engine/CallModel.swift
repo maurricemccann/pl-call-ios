@@ -15,6 +15,7 @@ struct Turn: Identifiable, Equatable {
     var who: Who
     var text: String
     var date: Date
+    var image: String? = nil   // a picture Claude showed: its path on the line
 
     enum Who { case me, claude, system }
 }
@@ -75,6 +76,7 @@ struct Turn: Identifiable, Equatable {
     @ObservationIgnored private var config: PLCallConfig?
     @ObservationIgnored private var reducer = EventReducer()
     @ObservationIgnored private var arm = QuickReplyArm()
+    @ObservationIgnored private let imageCache = NSCache<NSString, UIImage>()
     @ObservationIgnored private var sid: String?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var lineGeneration = 0
@@ -195,7 +197,7 @@ struct Turn: Identifiable, Equatable {
         self.config = config
         line = LineClient(config: config)
         voices = [PLCallConfig.Voice(id: Speaker.phone, label: "iPhone"), PLCallConfig.Voice(id: Speaker.personal, label: "My Personal Voice")]
-        quickReplies = config.quickReplyList
+        quickReplies = Self.builtInReplies + config.quickReplyList.filter { r in !Self.builtInReplies.contains { $0.label == r.label } }
         if let saved = UserDefaults.standard.string(forKey: Keys.voice), voices.contains(where: { $0.id == saved }) {
             voiceID = saved
         } else {
@@ -316,7 +318,62 @@ struct Turn: Identifiable, Equatable {
         voice(last)
     }
 
+    /// Chips the app owns (they need the PC's answer, not a message): the config's own chips follow them.
+    static let builtInReplies = [PLCallConfig.QuickReply(label: "STATUS", send: "@status", arm: nil),
+                                 PLCallConfig.QuickReply(label: "WHAT'S LEFT", send: "@left", arm: nil)]
+
+    /// STATUS: the PC answers at once from real state (so it works while the session is busy), and the session is asked too.
+    func askStatus() {
+        guard hasConfig else { return }
+        speaker.stop()
+        append(.me, "Status?")
+        tellFromPC("status")
+        deliver("Status check from the phone. In two short sentences: what are you doing right now, and what comes next?")
+    }
+
+    /// WHAT'S LEFT: the open items of the queue, from the PC.
+    func askWhatsLeft() {
+        guard hasConfig else { return }
+        speaker.stop()
+        append(.me, "What's left?")
+        tellFromPC("left")
+    }
+
+    private func tellFromPC(_ kind: String) {
+        guard let line else { return }
+        Task {
+            do {
+                let text = try await line.status(kind)
+                self.append(.claude, text)
+                self.lockLine = "Claude: " + text
+                if self.isInCall, !self.onHold { self.voice(text, tone: self.spokenCues) }
+            } catch {
+                self.note("Could not get that from the PC: \(plainSentence(error))")
+            }
+        }
+    }
+
+    /// One tap: Claude stops talking now (the voice and anything queued behind it). Does not stop his work.
+    func stopTalking() {
+        guard isInCall else { return }
+        interimTask?.cancel()
+        speaker.stop()
+        heldReply = nil
+        lastSpoke = Date()
+        rest()
+    }
+
+    /// A picture Claude showed on the call, fetched once and kept.
+    func loadImage(_ path: String) async -> UIImage? {
+        if let kept = imageCache.object(forKey: path as NSString) { return kept }
+        guard let line, let data = try? await line.image(path: path), let image = UIImage(data: data) else { return nil }
+        imageCache.setObject(image, forKey: path as NSString)
+        return image
+    }
+
     func tapQuickReply(_ r: PLCallConfig.QuickReply) {
+        if r.send == "@status" { askStatus(); return }
+        if r.send == "@left" { askWhatsLeft(); return }
         switch arm.tap(r, now: Date().timeIntervalSinceReferenceDate) {
         case .send(let text):
             armedReply = nil
@@ -931,6 +988,9 @@ struct Turn: Identifiable, Equatable {
         let before = reducer.lastSeq
         let outputs = reducer.ingest(event)
         guard reducer.lastSeq != before else { return }
+        if event.type == "permission_answered" { clearedAsk(event); return }
+        if event.type == "announce" { announced(event.text); return }
+        if let picture = event.image, event.role == "assistant" { append(.claude, "", image: picture) }   // the words follow the usual road
         if !isInCall { sessionMoved(turnEnded: event.type == "result" || event.isTurnEnd == true) }
         if isInCall, awaitingReply, pendingAsk == nil, event.type != "result", event.isTurnEnd != true {
             workBeat += 1
@@ -983,6 +1043,25 @@ struct Turn: Identifiable, Equatable {
                 isClaudeTyping = false
                 raise(ask)
             }
+        }
+    }
+
+    /// The PC says an approval card is settled: answered in the terminal or elsewhere, or the session moved on, or it timed out.
+    private func clearedAsk(_ event: SessionEvent) {
+        guard let ask = pendingAsk, Self.id(of: ask) == event.requestId else { return }
+        resolve(ask)
+        note(event.expired == true ? "That approval was cleared: the session moved on." : "Answered on another screen.")
+        rest()
+    }
+
+    /// A build landed on the feed: shown always, said when the call is quiet, a notification when the app is not in front.
+    private func announced(_ text: String?) {
+        guard let words = text?.trimmingCharacters(in: .whitespacesAndNewlines), !words.isEmpty else { return }
+        note(words)
+        if isInCall {
+            if !onHold, !speaker.isSpeaking, state != .hearing, pendingAsk == nil, !awaitingReply { voice(words, tone: spokenCues) }
+        } else if UIApplication.shared.applicationState != .active {
+            NotificationHub.shared.postNote(title: "A new build", body: words)
         }
     }
 
@@ -1606,8 +1685,8 @@ struct Turn: Identifiable, Equatable {
                               canAnswer: canAnswer, push: !handsFree, inCall: isInCall)
     }
 
-    private func append(_ who: Turn.Who, _ text: String) {
-        turns.append(Turn(id: UUID(), who: who, text: text, date: Date()))
+    private func append(_ who: Turn.Who, _ text: String, image: String? = nil) {
+        turns.append(Turn(id: UUID(), who: who, text: text, date: Date(), image: image))
         if turns.count > 400 { turns.removeFirst(turns.count - 400) }
     }
 

@@ -5,6 +5,10 @@ name: build
 on:
   workflow_dispatch:
     inputs:
+      publish:
+        description: "Publish the release to the SideStore feed. Turn off for a compile check only."
+        type: boolean
+        default: true
       app_group:
         description: "Mark the App Group in the build (lets the Lock Screen widget read the call state). Turn off if the install fails."
         type: boolean
@@ -107,6 +111,7 @@ jobs:
           cat source.json
 
       - name: Publish the release
+        if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
