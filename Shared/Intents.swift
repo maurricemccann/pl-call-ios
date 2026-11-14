@@ -77,6 +77,18 @@ struct ReplayIntent: LiveActivityIntent {
     }
 }
 
+/// 11-14: Claude stops talking now, from the Lock Screen or the Island, the same as the app's stop button. His work goes on.
+struct StopTalkingIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Stop talking"
+    static let supportedModes: IntentModes = .background
+
+    @MainActor func perform() async throws -> some IntentResult {
+        guard let run = await IntentBridge.whenReady({ IntentBridge.hush }) else { throw IntentBridgeError.notReady }
+        run()
+        return .result()
+    }
+}
+
 struct TalkIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Talk"
     static let supportedModes: IntentModes = .background

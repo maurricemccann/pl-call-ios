@@ -38,6 +38,8 @@ struct CallLiveActivity: Widget {
                             HeardRow()
                         } else if context.state.askID != nil {
                             AnswerRow()
+                        } else if context.state.state == "speaking" {
+                            HushButton()
                         } else if context.state.push == true {
                             TalkButton()
                         }
@@ -84,7 +86,10 @@ struct CallActivityView: View {
                     .font(WidgetStyle.text(18, .headline, strong: true))
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                if !hasAsk, !hasHeard, content.push == true {
+                if !hasAsk, !hasHeard, content.state == "speaking" {
+                    HushButton()
+                        .fixedSize()
+                } else if !hasAsk, !hasHeard, content.push == true {
                     TalkButton()
                         .fixedSize()
                 }
@@ -233,6 +238,18 @@ struct TalkButton: View {
         .buttonStyle(.borderedProminent)
         .tint(WidgetStyle.accent)
         .accessibilityLabel("Talk: open the microphone for one turn")
+    }
+}
+
+/// 11-14: while Claude is talking, one tap stops the voice (his work goes on). Same action as the app's stop button.
+struct HushButton: View {
+    var body: some View {
+        Button(intent: StopTalkingIntent()) {
+            Label("Stop", systemImage: "speaker.slash.fill")
+                .font(WidgetStyle.text(14, .footnote, strong: true))
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel("Stop Claude talking")
     }
 }
 

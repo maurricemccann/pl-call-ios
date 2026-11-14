@@ -926,6 +926,10 @@ struct Turn: Identifiable, Equatable {
             self?.probe.sawIntent()
             self?.talk()
         }
+        IntentBridge.hush = { [weak self] in
+            self?.probe.sawIntent()
+            self?.stopTalking()
+        }
         IntentBridge.heard = { [weak self] yes in
             self?.probe.sawIntent()
             self?.answerHeard(yes: yes)
