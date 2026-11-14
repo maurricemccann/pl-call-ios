@@ -16,6 +16,7 @@ final class MicTap: @unchecked Sendable {
         var accepting = true
         var frames: Int64 = 0
         var lastLoud: Double = 0   // when the mic last heard something as loud as speech
+        var floor: Double = 0.2    // the room's own noise, followed slowly (11-14: a warehouse sat above the old fixed 0.35, so his turn never ended)
     }
 
     private let engine = AVAudioEngine()
@@ -74,7 +75,13 @@ final class MicTap: @unchecked Sendable {
         input.installTap(onBus: 0, bufferSize: 4096, format: source) { buffer, _ in
             let level = MicTap.level(of: buffer)
             onLevel(level)
-            if level > 0.35 { clock.withLock { $0.lastLoud = CFAbsoluteTimeGetCurrent() } }
+            clock.withLock { state in
+                // the floor drops at once to anything quieter; it rises in about 8 s with noise just above it (a fan, a hum) and only over
+                // about 11 s with anything louder (simulated 11-14: a 0.6 room settles in 11 s; the gaps between words reset it, so speech is never lost)
+                let step = level < state.floor ? 1.0 : (level < state.floor + 0.18 ? 0.01 : 0.006)
+                state.floor += (level - state.floor) * step
+                if level > max(0.35, state.floor + 0.18) { state.lastLoud = CFAbsoluteTimeGetCurrent() }
+            }
             guard let converted = MicTap.convert(buffer, with: converter, to: target) else { return }
             let frames = Int64(converted.frameLength)
             let start = clock.withLock { state -> CMTime? in
