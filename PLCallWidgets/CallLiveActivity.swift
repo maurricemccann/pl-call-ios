@@ -16,6 +16,7 @@ struct CallLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CallActivityAttributes.self) { context in
             CallActivityView(content: context.state)
+                .activityBackgroundTint(Color.black.opacity(0.35))   // StandBy shows the Lock Screen view at 200%: a dark ground, edge to edge (WWDC26)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
