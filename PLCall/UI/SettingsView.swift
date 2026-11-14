@@ -6,6 +6,9 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmForget = false
     @AppStorage("plcall.edgeLight") private var edgeLight = false
+    @AppStorage("plcall.micMeter") private var micMeter = true
+    @AppStorage("plcall.confirmUnsure") private var confirmUnsure = true
+    @AppStorage("plcall.confirmBelow") private var confirmBelow = Heard.defaultThreshold
     @AppStorage("plcall.idleRingMinutes") private var idleMinutes = 10
     @AppStorage("plcall.ringSeconds") private var ringSeconds = 15
     @AppStorage("plcall.duckLevel") private var duckLevel = 2
@@ -132,6 +135,20 @@ struct SettingsView: View {
                     toggleRow("Wake word", "Hands-free only. The mic stays open, but only what you say after \u{201C}Claude\u{201D} is sent, and follow-ups within 20 seconds.", isOn: wake)
                     toggleRow("Working sounds", "A soft tick while Claude works, so a long turn is not silence.", isOn: ticks)
                     toggleRow("Edge light", "A glow around the screen while the microphone hears you.", isOn: $edgeLight)
+                    toggleRow("Mic meter", "A small level bar on the call screen, so in a loud place you can see the phone hears you above the room.", isOn: $micMeter)
+                    toggleRow("Confirm when unsure", "When the phone is not sure of a word, it says \u{201C}I heard: \u{2026}, right?\u{201D} and waits for Yes or Again before sending.", isOn: $confirmUnsure)
+                    if confirmUnsure {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Ask below \(Int((confirmBelow * 100).rounded())) percent sure")
+                                .plFont(.body)
+                            Slider(value: $confirmBelow, in: Heard.thresholdRange, step: 0.05) {
+                                Text("Ask below this confidence")
+                            }
+                            Text("Higher asks more often. The confirm card shows how sure it was, so you can tune this in the place you use it.")
+                                .plFont(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     toggleRow("Progress lines", "Claude\u{2019}s short notes while it works are spoken, not only the final answer.", isOn: progress)
                     toggleRow("Short spoken answers", "A long answer is said in a few sentences by the iPhone\u{2019}s own model. The full text stays on the screen.", isOn: short)
                     Picker(selection: $duckLevel) {

@@ -53,7 +53,10 @@ final class MicTap: @unchecked Sendable {
         self.onLevel = onLevel
         let input = engine.inputNode
         // enabling it again can post a configuration change, which would restart the mic in a loop
+        // Voice processing is the noise suppression + echo cancellation + gain control, on in AUTO, PUSH and music mode alike
+        // (it is an engine setting, not a session mode). A loud floor depends on it, so a call where it did not take says so.
         if !input.isVoiceProcessingEnabled { try input.setVoiceProcessingEnabled(true) }
+        if !input.isVoiceProcessingEnabled { Task { @MainActor in RingLog.note("mic noise suppression did not turn on") } }
         // gives the voice-processing I/O unit an output path in the graph
         _ = engine.mainMixerNode
         voice.attach(to: engine)   // Claude's voice plays through this engine, so echo cancellation hears it
@@ -175,7 +178,7 @@ actor SpeechListener {
     enum Event: Sendable {
         case level(Double)       // mic loudness 0...1
         case hearing(String)     // what he has said so far in this turn
-        case turn(String)        // a pause ended his turn: the final words
+        case turn(String, [String], Double?)   // a pause ended his turn: the final words, other readings of them, the least sure word's confidence
         case failed(String)
     }
 
@@ -189,6 +192,8 @@ actor SpeechListener {
     private var pauseTask: Task<Void, Never>?
     private var finalized = ""
     private var volatile = ""
+    private var finalSegments: [HeardSegment] = []   // what each final result carried, for the doubts and the other readings
+    private var volatileSegment: HeardSegment?
     private var consumedThrough = CMTime.zero   // results that end before this were already used or thrown away
     private var endOfTurn = 0.9
     private var endOfTurnInterim = 1.6
@@ -219,7 +224,7 @@ actor SpeechListener {
     private var words: [String] = []
 
     func setWords(_ list: [String]) {
-        words = Array(list.prefix(100))
+        words = Array(list.prefix(400))   // no documented cap on contextual strings; the bundled vocabulary is about 150
     }
 
     func start(endOfTurn: Double, endOfTurnInterim: Double) async throws {
@@ -233,9 +238,10 @@ actor SpeechListener {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
             throw PlainError(message: "English is not a supported transcription language here.")
         }
+        // alternatives + per-word confidence: the call asks "I heard X, right?" when unsure and sends the other readings with his words
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [],
-                                            reportingOptions: [.volatileResults, .fastResults],
-                                            attributeOptions: [.audioTimeRange])
+                                            reportingOptions: [.volatileResults, .fastResults, .alternativeTranscriptions],
+                                            attributeOptions: [.audioTimeRange, .transcriptionConfidence])
         try await mic.prepare(for: transcriber)
         let (inputs, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let fresh = SpeechAnalyzer(modules: [transcriber])
@@ -255,11 +261,13 @@ actor SpeechListener {
         }
         finalized = ""
         volatile = ""
+        finalSegments = []
+        volatileSegment = nil
         consumedThrough = .zero
         resultsTask = Task.detached { [weak self] in
             do {
                 for try await result in transcriber.results {
-                    await self?.took(String(result.text.characters), isFinal: result.isFinal, end: result.range.end)
+                    await self?.took(Self.segment(of: result), isFinal: result.isFinal, end: result.range.end)
                 }
             } catch {
                 // a stop cancels this task; anything else (a CancellationError included) means the analyzer finished on an error
@@ -283,8 +291,7 @@ actor SpeechListener {
             analyzer = nil
             await running.cancelAndFinishNow()
         }
-        finalized = ""
-        volatile = ""
+        resetHeard()
     }
 
     /// `onlyIfStopped`: an engine configuration change stops the engine; one that left it running needs nothing.
@@ -305,22 +312,26 @@ actor SpeechListener {
     /// Throws away what was heard so far (Claude's own voice, or a turn that was cut short).
     func discard() async {
         pauseTask?.cancel()
-        finalized = ""
-        volatile = ""
+        resetHeard()
         consumedThrough = mic.now()
         try? await analyzer?.finalize(through: nil)
     }
 
     /// A result is dropped only when ALL of it lies before the cut. Judging by its start threw away the first words
     /// of a turn whenever the transcriber's segment had begun before the cut (build 4: clipped sentence starts).
-    private func took(_ text: String, isFinal: Bool, end: CMTime) {
+    private func took(_ segment: HeardSegment, isFinal: Bool, end: CMTime) {
         guard CMTimeCompare(end, consumedThrough) > 0 else { return }
-        let piece = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let piece = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seg = segment
+        seg.text = piece
         if isFinal {
             finalized = Self.join(finalized, piece)
             volatile = ""
+            if !piece.isEmpty { finalSegments.append(seg) }
+            volatileSegment = nil
         } else {
             volatile = piece
+            volatileSegment = piece.isEmpty ? nil : seg
         }
         let shown = Self.join(finalized, volatile)
         guard !shown.isEmpty else { return }
@@ -349,12 +360,25 @@ actor SpeechListener {
         mic.quietSeconds()
     }
 
-    private func endTurn() async {
-        let text = Self.join(finalized, volatile)
+    /// The press that ends a push-to-talk turn at once: in a loud place the pause rule can hold a turn open for seconds.
+    func endNow() async {
+        pauseTask?.cancel()
+        await endTurn()
+    }
+
+    private func resetHeard() {
         finalized = ""
         volatile = ""
+        finalSegments = []
+        volatileSegment = nil
+    }
+
+    private func endTurn() async {
+        let text = Self.join(finalized, volatile)
+        let segments = finalSegments + (volatileSegment.map { [$0] } ?? [])
+        resetHeard()
         consumedThrough = mic.now()
-        if !text.isEmpty { out.yield(.turn(text)) }
+        if !text.isEmpty { out.yield(.turn(text, Heard.alternatives(segments), Heard.confidence(segments))) }
         try? await analyzer?.finalize(through: nil)   // the late final version of these words is then dropped by `took`
     }
 
@@ -374,9 +398,24 @@ actor SpeechListener {
             analyzer = nil
             await dead.cancelAndFinishNow()
         }
-        finalized = ""
-        volatile = ""
+        resetHeard()
         report(message)
+    }
+
+    /// The words of one result, the other readings Apple offered for the same audio, and its least sure real word.
+    /// Words under 3 letters are skipped: "a" and "to" score low all the time and are harmless.
+    private static func segment(of result: SpeechTranscriber.Result) -> HeardSegment {
+        let best = String(result.text.characters)
+        let alternatives = result.alternatives.map { String($0.characters).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != best }
+        var weakest: Double?
+        for run in result.text.runs {
+            let word = String(result.text[run.range].characters)
+            guard word.filter(\.isLetter).count >= 3,
+                  let confidence = run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self] else { continue }
+            weakest = min(weakest ?? 1, confidence)
+        }
+        return HeardSegment(text: best, alternatives: alternatives, confidence: weakest)
     }
 
     private static func join(_ a: String, _ b: String) -> String {

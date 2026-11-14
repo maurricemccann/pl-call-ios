@@ -1,0 +1,110 @@
+# His words for the ears. Built by vocab.py from his own notes; one per line. Refresh: python vocab.py --write <this file>
+Psyclaupse
+Claude
+Claude Code
+Psyched Luxuries
+PL DEV
+P L Dev
+pl-os
+P L OS
+pl-cron
+P L cron
+pl-headless
+Curate
+colourway
+colourways
+glyph
+glyphs
+GlyphGuy
+GlyphGirl
+GlyphBot
+the Haul
+the Forge
+Composer
+PL Composer
+Task Town
+Town
+Pick
+congregation
+the congregation
+Third Eye
+VJ Studio
+PL Paint
+Design Kit
+psyglass
+Square
+Printful
+Fourthwall
+Obsidian
+Cloudflare
+Wrangler
+Workers
+D1
+R2
+R1
+Rabbit
+SideStore
+AirPods
+Tailscale
+Voicebox
+Kokoro
+Whisper
+Blender
+FL Studio
+Codex
+Gemini
+NotebookLM
+Remote Control
+Channels
+the Standing Board
+the Roadmap
+the Golden Mend
+Golden Mend
+kintsugi
+the Defiance
+Fine Art
+Codex entry
+Three Truths
+Naming Law
+two tongues
+outer tongue
+inner tongue
+Second Mind
+Hive Mind
+Jarvis
+pl-call
+Pinterest
+Threads
+Tumblr
+Bluesky
+Instagram
+LinkedIn
+YouTube Shorts
+transmission
+Production School
+Living Generator
+Tracers
+curve library
+oil pastel
+unlisted
+storefront
+PDP
+OpenNext
+Next.js
+Xcode
+SwiftUI
+TestFlight
+Lemonade
+Ollama
+turn on all features
+turn off all features
+the call
+the call app
+push to talk
+hands free
+PL cron
+PL OS
+jarvis-os
+PL close
+PL headless
+PL open

@@ -180,3 +180,43 @@ final class QuickReplyTests: XCTestCase {
         XCTAssertEqual(arm.tap(ship, now: 14), .armed("SHIP"))   // too late: re-arms
     }
 }
+
+final class HeardTests: XCTestCase {
+    func testConfidenceIsTheWeakestStretch() {
+        XCTAssertEqual(Heard.confidence([HeardSegment(text: "a", confidence: 0.9), HeardSegment(text: "b", confidence: 0.3), HeardSegment(text: "c")]), 0.3)
+        XCTAssertNil(Heard.confidence([HeardSegment(text: "a")]))
+    }
+
+    func testUnsureOnlyWhenThereIsAConfidenceBelowTheThreshold() {
+        XCTAssertTrue(Heard.isUnsure(confidence: 0.4, below: 0.5))
+        XCTAssertFalse(Heard.isUnsure(confidence: 0.5, below: 0.5))
+        XCTAssertFalse(Heard.isUnsure(confidence: nil, below: 0.5))
+    }
+
+    func testAlternativesSwapTheLeastSureStretchFirst() {
+        let segments = [
+            HeardSegment(text: "bring off all teachers", alternatives: ["turn on all features", "bring on all teachers", "bring off all teachers"], confidence: 0.2),
+            HeardSegment(text: "please", alternatives: ["pleas"], confidence: 0.9),
+        ]
+        XCTAssertEqual(Heard.alternatives(segments), ["turn on all features please", "bring on all teachers please", "bring off all teachers pleas"])
+        XCTAssertEqual(Heard.alternatives(segments, limit: 1), ["turn on all features please"])
+        XCTAssertEqual(Heard.alternatives([HeardSegment(text: "the call", alternatives: ["The call", "the call"])]), [])
+    }
+
+    func testConfirmReplyTakesOnlyShortWholeAnswers() {
+        XCTAssertEqual(ConfirmReply.parse("Yes."), .yes)
+        XCTAssertEqual(ConfirmReply.parse("that\u{2019}s right"), .yes)
+        XCTAssertEqual(ConfirmReply.parse("No"), .again)
+        XCTAssertEqual(ConfirmReply.parse("try again"), .again)
+        XCTAssertEqual(ConfirmReply.parse("yes turn on all features"), .other)
+        XCTAssertEqual(ConfirmReply.parse("no I said the call"), .other)
+    }
+
+    func testSendBodyCarriesAlternativesOnlyWhenThereAreSome() throws {
+        let plain = try JSONEncoder().encode(BridgeBody.send("hello"))
+        XCTAssertEqual(String(decoding: plain, as: UTF8.self), #"{"text":"hello"}"#)
+        let doubt = try JSONSerialization.jsonObject(with: JSONEncoder().encode(BridgeBody.send("the ball", alt: ["the call", "a", "b", "c"], conf: 0.31))) as? [String: Any]
+        XCTAssertEqual(doubt?["alt"] as? [String], ["the call", "a", "b"])
+        XCTAssertEqual(doubt?["conf"] as? Double, 0.31)
+    }
+}

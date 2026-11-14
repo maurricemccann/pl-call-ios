@@ -95,7 +95,8 @@ public enum SpokenAnswer {
 
 /// The request bodies for the bridge, exactly as the call page sends them.
 public enum BridgeBody {
-    public struct Send: Encodable { public let text: String }
+    /// `alt`: other readings of what he said, `conf`: how sure the ears were; both only when the ears had doubts.
+    public struct Send: Encodable { public let text: String; public let alt: [String]?; public let conf: Double? }
     public struct Permission: Encodable {
         public let request_id: String
         public let decision: String
@@ -112,7 +113,9 @@ public enum BridgeBody {
         public let tool_use_id: String?
     }
 
-    public static func send(_ text: String) -> Send { Send(text: text) }
+    public static func send(_ text: String, alt: [String] = [], conf: Double? = nil) -> Send {
+        Send(text: text, alt: alt.isEmpty ? nil : Array(alt.prefix(3)), conf: conf)
+    }
 
     public static func permission(requestId: String, toolUseId: String?, allow: Bool, message: String? = nil) -> Permission {
         let m = message?.trimmingCharacters(in: .whitespacesAndNewlines)

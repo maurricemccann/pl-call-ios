@@ -19,6 +19,7 @@ struct CallScreen: View {
     @State private var showsPhotos = false
     @State private var showsCamera = false
     @AppStorage("plcall.edgeLight") private var edgeLight = false
+    @AppStorage("plcall.micMeter") private var micMeter = true
     @State private var selectTick = 0
     @State private var connectTick = 0
     @State private var endTick = 0
@@ -42,6 +43,7 @@ struct CallScreen: View {
         }
         .animation(PLMotion.standard(reduce: reduceMotion), value: showsEdgeLight)
         .animation(PLMotion.standard(reduce: reduceMotion), value: model.pendingAsk)
+        .animation(PLMotion.standard(reduce: reduceMotion), value: model.heardCheck)
         .sheet(item: $panel) { kind in
             panelView(kind)
         }
@@ -203,6 +205,13 @@ struct CallScreen: View {
                 .id(permission.id)
                 .transition(.opacity)
             }
+            if let check = model.heardCheck {
+                HeardCard(check: check) { yes in
+                    if yes { approveTick += 1 } else { selectTick += 1 }
+                    model.answerHeard(yes: yes)
+                }
+                .transition(.opacity)
+            }
             statusLines
             GlassEffectContainer {
                 if typeSize.isAccessibilitySize {
@@ -256,6 +265,9 @@ struct CallScreen: View {
                         .contentShape(Capsule())
                 }
                 .glassControl()
+            }
+            if micMeter, model.isInCall {
+                MicMeter(model: model)
             }
             Text(model.statusLine)
                 .plFont(.footnote)

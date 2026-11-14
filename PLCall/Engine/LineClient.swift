@@ -100,8 +100,14 @@ actor LineClient {
         return try JSONDecoder().decode(Backlog.self, from: data).events ?? []
     }
 
-    func send(sid: String, text: String) async throws {
-        _ = try await fetch("rc/api/sessions/\(Self.safe(sid))/send", method: "POST", body: BridgeBody.json(BridgeBody.send(text)), timeout: 30)
+    func send(sid: String, text: String, alt: [String] = [], conf: Double? = nil) async throws {
+        _ = try await fetch("rc/api/sessions/\(Self.safe(sid))/send", method: "POST", body: BridgeBody.json(BridgeBody.send(text, alt: alt, conf: conf)), timeout: 30)
+    }
+
+    /// His words list, rebuilt on the PC from his own notes (GET /vocab), so it can be refreshed without a new build.
+    func vocabulary() async throws -> [String] {
+        let data = try await fetch("vocab", timeout: 20)
+        return (try JSONDecoder().decode(JSONValue.self, from: data))["words"]?.array?.compactMap(\.string) ?? []
     }
 
     func permission(sid: String, requestID: String, toolUseID: String?, allow: Bool, message: String?) async throws {

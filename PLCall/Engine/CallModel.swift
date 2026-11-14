@@ -10,6 +10,13 @@ struct SessionChoice: Identifiable, Equatable, Sendable {
     let title: String
 }
 
+/// "I heard: ..., right?" waiting for his one tap (or his spoken yes / again). Shown when the ears were unsure of a word.
+struct HeardCheck: Equatable {
+    let text: String
+    let alts: [String]
+    let confidence: Double
+}
+
 struct Turn: Identifiable, Equatable {
     let id: UUID
     var who: Who
@@ -51,6 +58,10 @@ struct Turn: Identifiable, Equatable {
     var hasConfig = false
     var configError: String?
     var micLevel: Double = 0
+    var meterLevel: Double = 0           // the live mic meter: the level in any state of a call, not only while he is heard
+    var heardCheck: HeardCheck?
+    @ObservationIgnored private var heardTask: Task<Void, Never>?
+    @ObservationIgnored private var nextAlt: (alts: [String], conf: Double?)?   // other readings that ride with the next message
     var isClaudeTyping = false
     var sessionTitle: String?
     var sessions: [SessionChoice] = []   // the live sessions on the PC, for the picker
@@ -127,6 +138,8 @@ struct Turn: Identifiable, Equatable {
         static let reach = "plcall.stayReachable"
         static let idle = "plcall.idleRingMinutes"
         static let short = "plcall.shortAnswers"
+        static let confirm = "plcall.confirmUnsure"
+        static let confirmBelow = "plcall.confirmBelow"
     }
 
     private init() {
@@ -204,9 +217,10 @@ struct Turn: Identifiable, Equatable {
             voiceID = Speaker.phone
         }
         UserDefaults.standard.set(config.usesSystemFont, forKey: Keys.systemFont)
-        let words = ["Claude", "Psyclaupse", "Claude Code"] + (config.words ?? [])
+        let base = ["Claude", "Psyclaupse", "Claude Code"] + (config.words ?? [])
         let listener = self.listener
-        Task { await listener.setWords(words) }
+        Task { await listener.setWords(Vocabulary.merged(base, Vocabulary.cached(), Vocabulary.bundled())) }
+        refreshVocabulary(base)
         hasConfig = true
         configError = nil
         lastError = nil
@@ -290,6 +304,12 @@ struct Turn: Identifiable, Equatable {
         }
         guard isInCall else {
             startCall()
+            return
+        }
+        if !handsFree, armed, state == .hearing {
+            // a second press while he is mid-sentence ends the turn now: in a loud place the pause rule can hold it open for seconds
+            let listener = self.listener
+            Task { await listener.endNow() }
             return
         }
         speaker.stop()
@@ -1081,9 +1101,11 @@ struct Turn: Identifiable, Equatable {
             return
         }
         sentSomething()
+        let extra = nextAlt
+        nextAlt = nil
         Task {
             do {
-                try await line.send(sid: sid, text: text)
+                try await line.send(sid: sid, text: text, alt: extra?.alts ?? [], conf: extra?.conf)
             } catch {
                 self.sendFailed(error)
             }
@@ -1239,6 +1261,7 @@ struct Turn: Identifiable, Equatable {
         case .level(let level):
             probe.micHeard(level, inBackground: UIApplication.shared.applicationState != .active)
             micLevel = (state == .listening || state == .hearing) ? level : 0
+            meterLevel = level
         case .hearing(let raw):
             let text = speaker.withoutCue(raw)
             guard Self.hasWords(text) else { return }   // noise comes back as a lone "."
@@ -1253,11 +1276,18 @@ struct Turn: Identifiable, Equatable {
                 lastHearingPublish = Date()
                 publish()   // the Lock Screen shows what the mic is catching, about once a second
             }
-        case .turn(let raw):
+        case .turn(let raw, let alts, let confidence):
             let text = Self.tidy(speaker.withoutCue(raw))
             guard Self.hasWords(text) else {
                 if state == .hearing { rest() }
                 return
+            }
+            if heardCheck != nil {
+                switch ConfirmReply.parse(text) {
+                case .yes: settleHeard(yes: true); return
+                case .again: settleHeard(yes: false); return
+                case .other: clearHeard()   // he said it another way: this turn replaces the one being checked
+                }
             }
             guard speaker.isSpeaking else {
                 if pendingAsk == nil, let command = VoiceCommand.parse(text), runs(command) { return }
@@ -1265,6 +1295,8 @@ struct Turn: Identifiable, Equatable {
                     if state == .hearing { rest() }
                     return
                 }
+                if askToConfirm(words, alts: alts, confidence: confidence) { return }
+                if words == text { nextAlt = (alts, confidence) }   // a wake word trims the words, and then the readings no longer match
                 took(words)
                 if spokenCues, awaitingReply, pendingAsk == nil, !speaker.isSpeaking { speaker.cue("Got it") }
                 return
@@ -1280,6 +1312,65 @@ struct Turn: Identifiable, Equatable {
                 earsRetried = true
                 audioActivated()   // the listener dropped its finished analyzer, so this builds the ears again, once per call
             }
+        }
+    }
+
+    // MARK: unsure ears
+
+    /// When the ears were unsure of a word, the call says what it heard and waits for Yes or Again instead of sending a guess.
+    /// True when it asked (the words are then held, not sent).
+    private func askToConfirm(_ words: String, alts: [String], confidence: Double?) -> Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Keys.confirm) as? Bool ?? true, pendingAsk == nil, let confidence,
+              Heard.isUnsure(confidence: confidence, below: defaults.object(forKey: Keys.confirmBelow) as? Double ?? Heard.defaultThreshold) else { return false }
+        let check = HeardCheck(text: words, alts: alts, confidence: confidence)
+        heardCheck = check
+        heardTask?.cancel()
+        heardTask = Task {
+            try? await Task.sleep(for: .seconds(25))
+            guard !Task.isCancelled, self.heardCheck == check else { return }
+            self.clearHeard()
+            self.note("Not sent, no answer: \(check.text)")
+            if self.state == .hearing || self.state == .speaking { self.rest() }
+        }
+        lockLine = "Heard: " + words
+        let said = words.count > 160 ? String(words.prefix(160)) + " and so on" : words
+        voice("I heard: \(said). Right?", tone: spokenCues)
+        if state == .hearing { rest() }
+        return true
+    }
+
+    private func clearHeard() {
+        heardTask?.cancel()
+        heardTask = nil
+        heardCheck = nil
+    }
+
+    private func settleHeard(yes: Bool) {
+        guard let check = heardCheck else { return }
+        clearHeard()
+        speaker.stop()
+        if yes {
+            nextAlt = (check.alts, check.confidence)
+            took(check.text)
+            if spokenCues, awaitingReply, pendingAsk == nil, !speaker.isSpeaking { speaker.cue("Got it") }
+        } else {
+            note("Again.")
+            if handsFree { rest() } else { talk() }
+        }
+    }
+
+    /// The Yes / Again buttons on the call screen.
+    func answerHeard(yes: Bool) { settleHeard(yes: yes) }
+
+    /// Asks the PC for the freshest words list (built from his notes) and keeps it for the next call.
+    private func refreshVocabulary(_ base: [String]) {
+        guard let line else { return }
+        let listener = self.listener
+        Task {
+            guard let fresh = try? await line.vocabulary(), !fresh.isEmpty else { return }
+            Vocabulary.remember(fresh)
+            await listener.setWords(Vocabulary.merged(base, fresh, Vocabulary.bundled()))
         }
     }
 
@@ -1621,6 +1712,9 @@ struct Turn: Identifiable, Equatable {
         onHold = false
         lockLine = ""
         micLevel = 0
+        meterLevel = 0
+        clearHeard()
+        nextAlt = nil
         speaker.stop()
         speaker.chime(.ended)
         UIDevice.current.isProximityMonitoringEnabled = false
