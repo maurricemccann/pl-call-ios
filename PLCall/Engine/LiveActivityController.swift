@@ -17,7 +17,7 @@ import Foundation
     @discardableResult func start(title: String) -> String? {
         guard isAllowed else { return "Live Activities are off for Call in Settings." }
         guard !isLive else { return nil }
-        let state = CallActivityAttributes.ContentState(state: CallState.connecting.rawValue, line: "Connecting", askID: nil, askText: nil, push: nil)
+        let state = CallActivityAttributes.ContentState(state: CallState.connecting.rawValue, line: "Connecting", askID: nil, askText: nil, push: nil, heard: nil)
         do {
             _ = try Activity<CallActivityAttributes>.request(
                 attributes: CallActivityAttributes(title: title),
@@ -30,7 +30,7 @@ import Foundation
     }
 
     /// `ask` non-nil shows the Approve / Deny buttons, so pass nil the moment it is answered.
-    func update(state: CallState, line: String, ask: Ask?, alert: Bool = false, push: Bool = false) {
+    func update(state: CallState, line: String, ask: Ask?, alert: Bool = false, push: Bool = false, heard: String? = nil) {
         var askID: String?
         var askText: String?
         switch ask {
@@ -47,7 +47,8 @@ import Foundation
         let shortLine = String(line.prefix(220))   // the whole activity must stay under 4 KB
         let id = askID
         let text = askText
-        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push) }
+        let said = heard.map { String($0.prefix(180)) }
+        enqueue { await ActivityPush.update(state: stateName, line: shortLine, askID: id, askText: text, alert: alert, push: push, heard: said) }
     }
 
     func end() {
@@ -74,14 +75,14 @@ import Foundation
 
 /// The async ActivityKit calls, kept off the main actor: `Activity` is not Sendable, so it is fetched and used in one place.
 enum ActivityPush {
-    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool, push: Bool) async {
+    static func update(state: String, line: String, askID: String?, askText: String?, alert: Bool, push: Bool, heard: String?) async {
         let content = ActivityContent(
-            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText, push: push),
+            state: CallActivityAttributes.ContentState(state: state, line: line, askID: askID, askText: askText, push: push, heard: heard),
             staleDate: nil, relevanceScore: alert ? 100 : 50)
         for activity in Activity<CallActivityAttributes>.activities {
             if alert {
-                let body = askText ?? line
-                await activity.update(content, alertConfiguration: AlertConfiguration(title: "Claude needs your answer", body: "\(body)", sound: .default))
+                let body = heard.map { "I heard: \($0). Right?" } ?? askText ?? line
+                await activity.update(content, alertConfiguration: AlertConfiguration(title: heard == nil ? "Claude needs your answer" : "Did I hear you right?", body: "\(body)", sound: .default))
             } else {
                 await activity.update(content)
             }

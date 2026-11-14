@@ -13,6 +13,10 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
     static let probePrefix = "probe."
     static let questionCategory = "ask.question"
     static let optionPrefix = "ask.opt."   // + the option's index
+    static let heardCategory = "ask.heard"
+    static let heardYesID = "heard.yes"
+    static let heardAgainID = "heard.again"
+    static let heardIdentifier = "heard.ask"   // one at a time: a new check replaces the old banner
 
     private let lock = NSLock()
     private var questionActions: [UNNotificationAction] = []   // the last question's buttons, kept when the categories are set again
@@ -43,8 +47,12 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         // A question's reply is not an answer to it: it goes to the session as a message.
         let say = UNTextInputNotificationAction(identifier: Self.replyID, title: "Reply", options: [],
                                                 textInputButtonTitle: "Send", textInputPlaceholder: "Say something else")
+        // "I heard: ..., right?": no unlock needed, it only decides whether his own words are sent.
+        let yes = UNNotificationAction(identifier: Self.heardYesID, title: "Yes", options: [])
+        let again = UNNotificationAction(identifier: Self.heardAgainID, title: "No, again", options: [])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: Self.category, actions: [approve, deny, reply], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: Self.heardCategory, actions: [yes, again], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: Self.questionCategory, actions: options + [say], intentIdentifiers: [], options: [])
         ])
     }
@@ -87,6 +95,25 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         content.threadIdentifier = "session.psyclaupse"
         content.relevanceScore = 1
         post(content, identifier: "ask." + requestID)
+    }
+
+    /// "I heard: ..., right?" with Yes / No buttons, for when the app is not on screen (Lock Screen, banner, watch).
+    func postHeard(_ words: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Did I hear you right?"
+        content.body = "I heard: " + words
+        content.sound = .default
+        content.categoryIdentifier = Self.heardCategory
+        content.threadIdentifier = "session.psyclaupse"
+        content.relevanceScore = 1
+        post(content, identifier: Self.heardIdentifier)
+    }
+
+    /// Answered somewhere else first (the app, the Live Activity, his voice) or timed out: take the banner away.
+    func clearHeard() {
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: [Self.heardIdentifier])
+        center.removePendingNotificationRequests(withIdentifiers: [Self.heardIdentifier])
     }
 
     /// A plain line with no buttons: a build landed.

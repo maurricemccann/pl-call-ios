@@ -100,3 +100,28 @@ struct StartCallIntent: AudioRecordingIntent, LiveActivityIntent {
         return .result()
     }
 }
+
+/// "I heard: ..., right?" answered from the Lock Screen or the Dynamic Island: Yes sends the held words, Again drops them and listens again.
+struct HeardYesIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Yes, That Is Right"
+    static let supportedModes: IntentModes = .background
+    static let isDiscoverable: Bool = false
+
+    @MainActor func perform() async throws -> some IntentResult {
+        guard let run = await IntentBridge.whenReady({ IntentBridge.heard }) else { throw IntentBridgeError.notReady }
+        run(true)
+        return .result()
+    }
+}
+
+struct HeardAgainIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "No, Say It Again"
+    static let supportedModes: IntentModes = .background
+    static let isDiscoverable: Bool = false
+
+    @MainActor func perform() async throws -> some IntentResult {
+        guard let run = await IntentBridge.whenReady({ IntentBridge.heard }) else { throw IntentBridgeError.notReady }
+        run(false)
+        return .result()
+    }
+}

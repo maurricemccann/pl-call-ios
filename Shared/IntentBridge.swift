@@ -8,6 +8,7 @@ import Foundation
     static var startCall: (() -> Void)?
     static var replay: (() -> Void)?
     static var talk: (() -> Void)?
+    static var heard: ((Bool) -> Void)?   // true = Yes, send it; false = Again
 
     /// A control can start the app process cold, so wait up to two seconds for the app to set its hooks.
     static func whenReady<Hook>(_ hook: () -> Hook?) async -> Hook? {

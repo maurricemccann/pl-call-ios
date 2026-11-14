@@ -789,6 +789,10 @@ struct Turn: Identifiable, Equatable {
             probe.sawNotification(action: action, text: text)
             return
         }
+        if action == NotificationHub.heardYesID || action == NotificationHub.heardAgainID {
+            settleHeard(yes: action == NotificationHub.heardYesID)   // no-op when the check was already answered elsewhere
+            return
+        }
         if action.hasPrefix(NotificationHub.optionPrefix) || (action == NotificationHub.replyID && isQuestion(requestID)) {
             _ = await loading?.value
             guard let ask = pendingAsk, case .question(let waiting, _, _, _) = ask, waiting == requestID else { return }
@@ -921,6 +925,10 @@ struct Turn: Identifiable, Equatable {
         IntentBridge.talk = { [weak self] in
             self?.probe.sawIntent()
             self?.talk()
+        }
+        IntentBridge.heard = { [weak self] yes in
+            self?.probe.sawIntent()
+            self?.answerHeard(yes: yes)
         }
         NotificationHub.shared.register()
         WatchLink.shared.start()
@@ -1335,6 +1343,8 @@ struct Turn: Identifiable, Equatable {
         }
         lockLine = "Heard: " + words
         let said = words.count > 160 ? String(words.prefix(160)) + " and so on" : words
+        if UIApplication.shared.applicationState != .active { NotificationHub.shared.postHeard(said) }
+        publish(alert: true)   // the Lock Screen and Island show Yes / Again, and the Island expands once
         voice("I heard: \(said). Right?", tone: spokenCues)
         if state == .hearing { rest() }
         return true
@@ -1343,7 +1353,10 @@ struct Turn: Identifiable, Equatable {
     private func clearHeard() {
         heardTask?.cancel()
         heardTask = nil
+        guard heardCheck != nil else { return }
         heardCheck = nil
+        NotificationHub.shared.clearHeard()   // whichever answer came first, the other surfaces let go
+        publish()
     }
 
     private func settleHeard(yes: Bool) {
@@ -1772,7 +1785,7 @@ struct Turn: Identifiable, Equatable {
         ControlCenter.shared.reloadAllControls()
         // The Lock Screen shows the conversation: his words while he talks, otherwise the last thing either side said.
         let shown = (state == .hearing || state == .lost || state == .connecting || lockLine.isEmpty) ? statusLine : lockLine
-        activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree)
+        activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree, heard: heardCheck?.text)
         var canAnswer = false
         if case .permission? = pendingAsk { canAnswer = true }
         WatchLink.shared.send(state: state.rawValue, line: String(shown.prefix(200)), ask: askText.map { String($0.prefix(200)) },

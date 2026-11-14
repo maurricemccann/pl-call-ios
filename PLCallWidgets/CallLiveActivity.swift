@@ -34,7 +34,9 @@ struct CallLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
                         DetailLine(content: context.state, lines: 2)
-                        if context.state.askID != nil {
+                        if context.state.heard != nil {
+                            HeardRow()
+                        } else if context.state.askID != nil {
                             AnswerRow()
                         } else if context.state.push == true {
                             TalkButton()
@@ -63,6 +65,7 @@ struct CallActivityView: View {
 
     private var state: CallState { WidgetStyle.state(content.state) }
     private var hasAsk: Bool { content.askID != nil }
+    private var hasHeard: Bool { content.heard != nil }
 
     var body: some View {
         if family == .small {
@@ -81,14 +84,16 @@ struct CallActivityView: View {
                     .font(WidgetStyle.text(18, .headline, strong: true))
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                if !hasAsk, content.push == true {
+                if !hasAsk, !hasHeard, content.push == true {
                     TalkButton()
                         .fixedSize()
                 }
                 EndButton(compact: false, tinted: false)
             }
-            DetailLine(content: content, lines: hasAsk ? 2 : 3)
-            if hasAsk {
+            DetailLine(content: content, lines: hasAsk || hasHeard ? 2 : 3)
+            if hasHeard {
+                HeardRow()
+            } else if hasAsk {
                 AnswerRow()
             }
         }
@@ -106,7 +111,20 @@ struct CallActivityView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            if hasAsk {
+            if hasHeard {
+                HStack(spacing: 6) {
+                    Button(intent: HeardYesIntent()) {
+                        Text("Yes")
+                    }
+                    .tint(WidgetStyle.accent)
+                    Button(intent: HeardAgainIntent()) {
+                        Text("Again")
+                    }
+                }
+                .font(WidgetStyle.text(14, .footnote, strong: true))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            } else if hasAsk {
                 HStack(spacing: 6) {
                     Button(intent: ApproveIntent()) {
                         Text("Approve")
@@ -133,9 +151,12 @@ struct DetailLine: View {
     let lines: Int
 
     /// A question carries text but no askID (no buttons can answer it here), so the text alone marks an ask.
-    private var isAsking: Bool { content.askID != nil || content.askText != nil }
+    private var isAsking: Bool { content.askID != nil || content.askText != nil || content.heard != nil }
 
     private var words: String {
+        if let heard = content.heard {
+            return "I heard: " + heard + ". Right?"
+        }
         if isAsking {
             return content.askText ?? "Waiting for your answer."
         }
@@ -178,6 +199,27 @@ struct AnswerRow: View {
         .font(WidgetStyle.text(14, .footnote, strong: true))
         .lineLimit(1)
         .minimumScaleFactor(0.7)
+    }
+}
+
+/// "I heard: ..., right?": Yes sends the held words, Again drops them and listens again. Answerable with the phone locked.
+struct HeardRow: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(intent: HeardYesIntent()) {
+                Text("Yes").frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WidgetStyle.accent)
+            .accessibilityLabel("Yes, that is what I said")
+            Button(intent: HeardAgainIntent()) {
+                Text("Again").frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("No, listen again")
+        }
+        .font(WidgetStyle.text(14, .footnote, strong: true))
+        .lineLimit(1)
     }
 }
 
