@@ -6,12 +6,13 @@ enum AudioSessionManager {
     enum Change: Sendable { case interrupted, resumed, routeChanged, engineReset }
 
     /// `music`: no phone-style call. Other audio keeps playing, headphones stay in full quality (A2DP).
-    /// `.bluetoothHighQualityRecording` (iOS 26) lets AirPods that support it record in full quality too.
+    /// No `.bluetoothHighQualityRecording` (his report 11-13, AirPods dead on calls): Apple allows it only in the default mode, and the mic's
+    /// voice processing moves the session to voiceChat, where AirPods get no audio at all (same failure: livekit client-sdk-react-native #467).
     static func configure(music: Bool = false) throws {
         if music {
             try AVAudioSession.sharedInstance().setCategory(
                 .playAndRecord, mode: .default,
-                options: [.mixWithOthers, .allowBluetoothA2DP, .bluetoothHighQualityRecording, .defaultToSpeaker])
+                options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker])   // as before 43dbb98: AirPods play, music stays
         } else {
             try AVAudioSession.sharedInstance().setCategory(
                 .playAndRecord, mode: .voiceChat,
