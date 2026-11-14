@@ -58,14 +58,14 @@ public enum Heard {
 public enum ConfirmReply: Equatable, Sendable {
     case yes, again, other
 
-    private static let yes: Set<String> = ["yes", "yeah", "yep", "yup", "right", "correct", "that's right", "thats right", "that is right", "sure", "ok", "okay", "send it", "go", "go ahead", "exactly"]
-    private static let again: Set<String> = ["again", "no", "nope", "wrong", "not quite", "try again", "say again", "say that again", "once more", "no that's wrong", "that's wrong", "thats wrong"]
+    private static let yesWords: Set<String> = ["yes", "yeah", "yep", "yup", "right", "correct", "that's right", "thats right", "that is right", "sure", "ok", "okay", "send it", "go", "go ahead", "exactly"]
+    private static let againWords: Set<String> = ["again", "no", "nope", "wrong", "not quite", "try again", "say again", "say that again", "once more", "no that's wrong", "that's wrong", "thats wrong"]
 
     public static func parse(_ heard: String) -> ConfirmReply {
         let words = heard.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
             .split { !($0.isLetter || $0 == "'") }.joined(separator: " ")
-        if yes.contains(words) { return .yes }
-        if again.contains(words) { return .again }
+        if yesWords.contains(words) { return .yes }
+        if againWords.contains(words) { return .again }
         return .other
     }
 }
