@@ -963,7 +963,7 @@ struct Turn: Identifiable, Equatable {
             guard generation == lineGeneration else { return }
             if sid == session.id, reducer.lastSeq > 0 {
                 // the same session after a drop: take what was missed (a turn end, a permission) instead of skipping it
-                for event in backlog where event.sequenceNum > reducer.lastSeq { took(event) }
+                for event in backlog where event.sequenceNum > reducer.lastSeq { took(event, live: false) }
             } else {
                 reducer.prime(backlog)
                 if pendingAsk == nil, let waiting = EventReducer.waitingAsk(backlog) {
@@ -1020,7 +1020,16 @@ struct Turn: Identifiable, Equatable {
         if isInCall { set(.lost, message) }
     }
 
-    private func took(_ event: SessionEvent) {
+    private func took(_ event: SessionEvent, live: Bool = true) {
+        // 11-14 his report ("you stopped reading your replies"): the reducer holds Claude's lines only while it is `waiting`, which only a
+        // turn the phone started (his voice, a tap) sets. A turn he types at the PC never reached his ears. A line Claude writes during a
+        // live call is a reply in progress whoever started the turn; missed events replayed after a drop (live: false) stay silent.
+        if live, isInCall, !reducer.waiting, pendingAsk == nil, event.role == "assistant",
+           !(event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reducer.sent()
+            awaitingReply = true
+            isClaudeTyping = true
+        }
         let before = reducer.lastSeq
         let outputs = reducer.ingest(event)
         guard reducer.lastSeq != before else { return }
