@@ -20,7 +20,7 @@ jobs:
       # SideStore re-names the phone app with the signing team's suffix; the watch app must name that exact companion.
       SUFFIX: ${{ secrets.WATCH_SUFFIX }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Select Xcode 27.2
         run: sudo xcode-select -s /Applications/Xcode_27.2.app
@@ -86,7 +86,7 @@ jobs:
           ls -l PLCall-watch.ipa
 
       # Kept as a private artifact, not a public release: the file carries the signing team's suffix.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PLCall-watch-ipa
           path: PLCall-watch.ipa
