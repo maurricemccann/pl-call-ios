@@ -20,6 +20,7 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
 
     private let lock = NSLock()
     private var questionActions: [UNNotificationAction] = []   // the last question's buttons, kept when the categories are set again
+    private static let lastOptionsKey = "plcall.lastQuestionOptions"
 
     /// Called from the app's init: the delegate and categories must exist before launch ends,
     /// and waking the model here sets the intent hooks even when no screen is ever shown.
@@ -42,6 +43,12 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         let reply = UNTextInputNotificationAction(identifier: Self.replyID, title: "Reply", options: [.authenticationRequired],
                                                   textInputButtonTitle: "Send", textInputPlaceholder: "A short message")
         lock.lock()
+        if questionActions.isEmpty {
+            // a cold launch registers the categories again: without the last question's buttons the ones already on his Lock Screen or
+            // watch would lose their answers, and a tap there would have nothing to answer with
+            let saved = UserDefaults.standard.stringArray(forKey: Self.lastOptionsKey) ?? []
+            questionActions = saved.enumerated().map { UNNotificationAction(identifier: Self.optionPrefix + String($0.offset), title: $0.element, options: []) }
+        }
         let options = questionActions
         lock.unlock()
         // A question's reply is not an answer to it: it goes to the session as a message.
@@ -85,6 +92,7 @@ final class NotificationHub: NSObject, UNUserNotificationCenterDelegate, @unchec
         lock.lock()
         questionActions = Array(buttons)
         lock.unlock()
+        UserDefaults.standard.set(options.prefix(4).map { String($0.prefix(40)) }, forKey: Self.lastOptionsKey)
         setCategories()
         let content = UNMutableNotificationContent()
         content.title = missed ? "Missed call from Psyclaupse" : "Claude has a question"
