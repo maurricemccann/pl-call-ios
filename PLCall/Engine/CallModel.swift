@@ -39,6 +39,8 @@ struct Turn: Identifiable, Equatable {
     var turns: [Turn] = []
     var isInCall = false
     var handsFree = true
+    var tapMode = false                  // Tap: nothing is heard or said, every question waits for his tap
+    var answeredAtPC = false             // shown for 2 s when the session withdraws a waiting ask
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
     var musicMode = false                // no phone-style call: other audio keeps playing
     var workBeat = 0                     // one per session event while Claude works: the avatar's glow sweeps on each
@@ -54,7 +56,9 @@ struct Turn: Identifiable, Equatable {
     }
     var quickReplies: [PLCallConfig.QuickReply] = []
     var armedReply: String?
-    var pendingAsk: Ask?
+    private(set) var asks = AskQueue()   // the ask on screen and the ones behind it (Tap queues; the other modes replace)
+    var pendingAsk: Ask? { asks.current }
+    var moreWaiting: Int { asks.waiting.count }
     var hasConfig = false
     var configError: String?
     var micLevel: Double = 0
@@ -120,6 +124,7 @@ struct Turn: Identifiable, Equatable {
         static let working = "Claude is working"
         static let speaking = "Speaking"
         static let waiting = "Waiting for your answer"
+        static let tap = "Tap mode: nothing is heard or said"
         static let noSession = "No live session. Start Claude Code on the PC first."
         static let keyRefused = "The call key was refused. Load your config again."
         static let title = "Claude"
@@ -128,6 +133,7 @@ struct Turn: Identifiable, Equatable {
     private enum Keys {
         static let voice = "plcall.voice"
         static let handsFree = "plcall.handsFree"
+        static let listenMode = "plcall.listenMode"
         static let systemFont = "plcall.usesSystemFont"
         static let cues = "plcall.spokenCues"
         static let music = "plcall.musicMode"
@@ -143,7 +149,11 @@ struct Turn: Identifiable, Equatable {
     }
 
     private init() {
-        handsFree = UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool ?? true
+        let mode = ListenMode.resolve(stored: UserDefaults.standard.string(forKey: Keys.listenMode),
+                                      legacyHandsFree: UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool)
+        handsFree = mode == .handsFree
+        tapMode = mode == .tap
+        speaker.silent = tapMode
         spokenCues = UserDefaults.standard.object(forKey: Keys.cues) as? Bool ?? true
         musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
@@ -194,7 +204,7 @@ struct Turn: Identifiable, Equatable {
         sessionTitle = nil
         isClaudeTyping = false
         awaitingReply = false
-        if let ask = pendingAsk { resolve(ask) }
+        if let ask = pendingAsk { resolve(ask, dropQueue: true) }
         UserDefaults.standard.removeObject(forKey: Keys.systemFont)
         let store = self.store
         Task { await store.forget() }
@@ -249,6 +259,10 @@ struct Turn: Identifiable, Equatable {
     func startCall() {
         guard hasConfig, !isInCall else { return }
         Task { _ = try? await IntentDonationManager.shared.donate(intent: StartCallIntent()) }   // Siri learns when he calls
+        if tapMode {
+            startInTapMode()
+            return
+        }
         keepAlive.stop()
         idleRingTask?.cancel()
         isInCall = true
@@ -292,6 +306,7 @@ struct Turn: Identifiable, Equatable {
 
     /// PUSH mode, the headset press and the Talk button: stop the voice and take one turn.
     func talk() {
+        guard !tapMode else { return }   // Tap never opens the mic
         heardFromHim()
         if isInCall, state == .lost, micRetries > 8 {
             micRetries = 0
@@ -326,6 +341,10 @@ struct Turn: Identifiable, Equatable {
     }
 
     func replay() {
+        if tapMode {
+            statusLine = "Tap mode says nothing aloud. The words are above."
+            return
+        }
         if callKit.isRinging {
             _ = callKit.endCall()
             return
@@ -462,10 +481,15 @@ struct Turn: Identifiable, Equatable {
     }
 
     func answerQuestion(option: Int) {
-        guard let ask = pendingAsk, case .question(let requestID, let toolUseID, let question, let input) = ask,
-              question.options.indices.contains(option) else { return }
+        guard let ask = pendingAsk, case .question(_, _, let question, _) = ask, question.options.indices.contains(option) else { return }
+        answerQuestion(chosen: [question.options[option]])
+    }
+
+    /// Tap mode: several picked options, or his own typed words ("Other...").
+    func answerQuestion(chosen: [String]) {
+        guard let ask = pendingAsk, case .question(let requestID, let toolUseID, let question, let input) = ask, !chosen.isEmpty else { return }
         resolve(ask)
-        note("Answered: \(question.options[option])")
+        note("Answered: \(chosen.joined(separator: ", "))")
         guard let line, let sid else {
             note(Say.noSession)
             rest()
@@ -474,7 +498,7 @@ struct Turn: Identifiable, Equatable {
         sentSomething()
         Task {
             do {
-                try await line.dialog(sid: sid, requestID: requestID, toolUseID: toolUseID, question: question, option: option, input: input)
+                try await line.dialog(sid: sid, requestID: requestID, toolUseID: toolUseID, question: question, chosen: chosen, input: input)
             } catch {
                 self.sendFailed(error)
             }
@@ -502,10 +526,22 @@ struct Turn: Identifiable, Equatable {
         voice("This is the voice I will use on the call.", voiceID: id)
     }
 
-    func setHandsFree(_ on: Bool) {
-        handsFree = on
-        UserDefaults.standard.set(on, forKey: Keys.handsFree)
+    func setHandsFree(_ on: Bool) { setListenMode(on ? .handsFree : .push) }
+
+    var listenMode: ListenMode { tapMode ? .tap : (handsFree ? .handsFree : .push) }
+
+    func setListenMode(_ mode: ListenMode) {
+        let wasTap = tapMode
+        tapMode = mode == .tap
+        handsFree = mode == .handsFree
+        speaker.silent = tapMode
+        UserDefaults.standard.set(mode.rawValue, forKey: Keys.listenMode)
+        UserDefaults.standard.set(handsFree, forKey: Keys.handsFree)
         armed = false
+        if isInCall, wasTap != tapMode {
+            endCall()   // a Tap session has no audio and a call does: hang up, he rings again in the new mode
+            return
+        }
         updateGate()
         if isInCall, !speaker.isSpeaking, state != .hearing { rest() }
         publish()   // the Lock Screen shows or hides its Talk button
@@ -514,6 +550,7 @@ struct Turn: Identifiable, Equatable {
     /// A button on the watch app. It can only steer a call that is already up: the mic cannot start from the background.
     func watchCommand(_ command: String, text: String?) {
         switch command {
+        case "option": if let text, let index = Int(text) { answerQuestion(option: index) }
         case "approve": answerPermission(allow: true, message: text)
         case "deny": answerPermission(allow: false, message: text)
         case "replay": replay()
@@ -622,7 +659,7 @@ struct Turn: Identifiable, Equatable {
         guard id != chosenSession else { return }
         chosenSession = id
         UserDefaults.standard.set(id, forKey: Keys.session)
-        if let ask = pendingAsk { resolve(ask) }
+        if let ask = pendingAsk { resolve(ask, dropQueue: true) }
         awaitingReply = false
         isClaudeTyping = false
         dropLine()
@@ -706,6 +743,7 @@ struct Turn: Identifiable, Equatable {
     /// Rings the phone. The silent background line lets go of the audio first, so the call can take it cleanly.
     /// While he is on another call it does not ring: the notification waits instead.
     private func ringNow(_ reason: String) async -> String? {
+        guard !tapMode else { return nil }   // Tap never rings: a notice and a buzz are the only nudges
         if callKit.otherCallActive {
             RingLog.note("no ring: another call is up")
             return nil
@@ -1046,12 +1084,12 @@ struct Turn: Identifiable, Equatable {
         }
         let moved = event.type == "result" || event.isTurnEnd == true || event.role == "user"
             || (event.role == "assistant" && !(event.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        if outputs.isEmpty, let ask = pendingAsk, moved, event.type != "control_request", event.isBlockingControl != true {
+        if !tapMode, outputs.isEmpty, let ask = pendingAsk, moved, event.type != "control_request", event.isBlockingControl != true {   // Tap: only the session's own withdraw clears an ask
             // The session moved on: the ask was answered on the PC or another screen.
             resolve(ask)
             rest()
         }
-        if outputs.isEmpty, speakProgress, isInCall, awaitingReply, event.role == "assistant",
+        if outputs.isEmpty, speakProgress, !tapMode, isInCall, awaitingReply, event.role == "assistant",
            let words = event.text?.trimmingCharacters(in: .whitespacesAndNewlines), !words.isEmpty {
             // A line written while the work goes on. The last line of a turn is followed at once by the turn end,
             // so only a line still standing after 2.5 seconds is progress.
@@ -1093,9 +1131,25 @@ struct Turn: Identifiable, Equatable {
 
     /// The PC says an approval card is settled: answered in the terminal or elsewhere, or the session moved on, or it timed out.
     private func clearedAsk(_ event: SessionEvent) {
-        guard let ask = pendingAsk, Self.id(of: ask) == event.requestId else { return }
+        guard let id = event.requestId else { return }
+        guard let ask = pendingAsk, Self.id(of: ask) == id else {
+            if asks.withdraw(requestId: id) == .queued {   // one that was only waiting behind: gone quietly
+                NotificationHub.shared.clear(requestID: id)
+                publish()
+            }
+            return
+        }
         resolve(ask)
-        note(event.expired == true ? "That approval was cleared: the session moved on." : "Answered on another screen.")
+        if tapMode {
+            note("Answered at the PC.")
+            answeredAtPC = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                self.answeredAtPC = false
+            }
+        } else {
+            note(event.expired == true ? "That approval was cleared: the session moved on." : "Answered on another screen.")
+        }
         rest()
     }
 
@@ -1160,30 +1214,41 @@ struct Turn: Identifiable, Equatable {
     // MARK: asks
 
     private func raise(_ ask: Ask) {
-        RingLog.note("ask arrived (in call: \(isInCall), line kept open: \(keepAlive.isOn))")
-        if let earlier = pendingAsk, earlier != ask {
+        RingLog.note("ask arrived (in call: \(isInCall), line kept open: \(keepAlive.isOn), tap: \(tapMode))")
+        switch asks.raise(ask, queueing: tapMode) {
+        case .already:
+            return
+        case .queued:
+            publish()   // "2 more waiting" shows under the one on screen; it gets its own notice when it steps up
+            return
+        case .replaced(let earlier):
             // a second ask replaces the first: the first one's notification must not stay answerable
-            switch earlier {
-            case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
-            case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
-            }
+            NotificationHub.shared.clear(requestID: Self.id(of: earlier))
+        case .showing:
+            break
         }
-        pendingAsk = ask
+        present(ask)
+    }
+
+    /// Puts the ask on every surface: the transcript, the notification, the voice (not in Tap), the Live Activity and the watch.
+    private func present(_ ask: Ask) {
         switch ask {
         case .permission(let requestID, let toolUseID, let forWhat, let what):
-            let line = forWhat + " Say yes or no."
+            let line = tapMode ? forWhat : forWhat + " Say yes or no."
             append(.claude, what.isEmpty ? line : line + "\n" + what)
             NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, sid: sid)
-            if isInCall { head.start() }   // a ring starts its own head reading; with no call nothing needs it (battery)
+            if isInCall, !tapMode { head.start() }   // a ring starts its own head reading; with no call nothing needs it (battery)
         case .question(let requestID, _, let question, _):
-            append(.claude, spokenLine(for: ask))
+            append(.claude, tapMode ? question.question : spokenLine(for: ask))
             NotificationHub.shared.postQuestion(requestID: requestID, body: question.question, options: question.options)
         }
         updateGate()
         state = .waitingApproval
         statusLine = Say.waiting
         publish(alert: true)
-        if isInCall, !onHold {
+        if tapMode {
+            nagWhileWaiting()   // never spoken, never rung: a buzz and a notice every minute, until he taps
+        } else if isInCall, !onHold {
             spokenAsk = Self.id(of: ask)
             speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: spokenCues)
         } else if isInCall {
@@ -1192,6 +1257,26 @@ struct Turn: Identifiable, Equatable {
             let reason = "Psyclaupse needs you"
             Task {
                 if let refused = await self.ringNow(reason) { self.lastError = "The ring was refused: \(refused)" }
+            }
+        }
+    }
+
+    @ObservationIgnored private var nagTask: Task<Void, Never>?
+
+    /// Tap: a gentle haptic every 60 s while the ask waits, and a local notice when the app is not in front.
+    private func nagWhileWaiting() {
+        nagTask?.cancel()
+        guard tapMode, let current = pendingAsk else { return }
+        let id = Self.id(of: current)
+        nagTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled, let now = self.pendingAsk, Self.id(of: now) == id else { return }
+                if UIApplication.shared.applicationState == .active {
+                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                } else {
+                    NotificationHub.shared.postNote(title: "Claude is still waiting", body: self.askText ?? "A question needs your tap.")
+                }
             }
         }
     }
@@ -1214,8 +1299,9 @@ struct Turn: Identifiable, Equatable {
     }
 
     /// The ask is settled, here or anywhere else: take it off every surface at once.
-    private func resolve(_ ask: Ask) {
+    private func resolve(_ ask: Ask, dropQueue: Bool = false) {
         spokenAsk = nil
+        nagTask?.cancel()
         if callKit.isRinging {
             RingLog.note("ring stopped: answered somewhere else")
             _ = callKit.endCall()
@@ -1224,11 +1310,17 @@ struct Turn: Identifiable, Equatable {
         case .permission(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
         case .question(let requestID, _, _, _): NotificationHub.shared.clear(requestID: requestID)
         }
-        pendingAsk = nil
+        if dropQueue {
+            for waiting in asks.waiting { NotificationHub.shared.clear(requestID: Self.id(of: waiting)) }
+            asks.clear()
+        } else {
+            asks.settle()   // the next waiting ask steps up
+        }
         head.stop()
         speaker.stop()
         updateGate()
         publish()
+        if let next = asks.current { present(next) }
     }
 
     private func answer(_ text: String, to ask: Ask) {
@@ -1497,7 +1589,7 @@ struct Turn: Identifiable, Equatable {
 
     /// The mic feeds the transcriber only when a turn is wanted: hands-free, one pressed turn, or an answer.
     private func updateGate() {
-        listener.setAccepting(isInCall && !isMuted && (handsFree || armed || pendingAsk != nil))
+        listener.setAccepting(isInCall && !tapMode && !isMuted && (handsFree || armed || pendingAsk != nil))
     }
 
     // MARK: voice
@@ -1526,6 +1618,10 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func voice(_ text: String, voiceID id: String? = nil, tone: Bool = false) {
+        guard !tapMode else {
+            rest()
+            return
+        }
         if !isInCall {
             do {
                 try AudioSessionManager.activate()
@@ -1571,6 +1667,20 @@ struct Turn: Identifiable, Equatable {
 
     /// Music mode: the session mixes with other audio and no system call is placed, so Apple Music keeps playing.
     /// The headset buttons are left to the music.
+    /// Tap mode: no microphone, no speaker, no phone call. Only the line to the PC, kept open, and buttons.
+    private func startInTapMode() {
+        idleRingTask?.cancel()
+        isInCall = true
+        connectedOnce = true
+        lastError = nil
+        activity.start(title: Say.title)
+        keepAlive.start()   // silent audio only, so the line stays open with the screen off; it never touches the mic
+        Task { _ = await NotificationHub.shared.authorize() }   // the notices are how a waiting question finds him
+        connect()
+        note("Tap mode. Nothing is heard or said. Every question waits here until you tap.")
+        rest()
+    }
+
     private func startInMusicMode() {
         do {
             try AudioSessionManager.activate(music: true)
@@ -1780,6 +1890,8 @@ struct Turn: Identifiable, Equatable {
             set(.working, line ?? Say.working)
         } else if !isInCall {
             set(.idle, line ?? (hasConfig ? Say.ready : Say.load))
+        } else if tapMode {
+            set(.idle, line ?? Say.tap)
         } else if handsFree || armed {
             let fresh = state != .listening && state != .hearing
             set(.listening, line ?? Say.listening)
@@ -1802,11 +1914,18 @@ struct Turn: Identifiable, Equatable {
         ControlCenter.shared.reloadAllControls()
         // The Lock Screen shows the conversation: his words while he talks, otherwise the last thing either side said.
         let shown = (state == .hearing || state == .lost || state == .connecting || lockLine.isEmpty) ? statusLine : lockLine
-        activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree, heard: heardCheck?.text)
+        activity.update(state: state, line: shown, ask: pendingAsk, alert: alert, push: isInCall && !handsFree && !tapMode, heard: heardCheck?.text)
         var canAnswer = false
         if case .permission? = pendingAsk { canAnswer = true }
+        var options: [String] = []
+        var longQuestion = false
+        if case .question(_, _, let question, _)? = pendingAsk {
+            options = question.options.prefix(4).map { String($0.prefix(40)) }
+            longQuestion = question.options.count > 4 || question.multiSelect
+        }
         WatchLink.shared.send(state: state.rawValue, line: String(shown.prefix(200)), ask: askText.map { String($0.prefix(200)) },
-                              canAnswer: canAnswer, push: !handsFree, inCall: isInCall)
+                              canAnswer: canAnswer, push: !handsFree && !tapMode, inCall: isInCall, tap: tapMode, options: options,
+                              more: moreWaiting, longQuestion: longQuestion)
     }
 
     private func append(_ who: Turn.Who, _ text: String, image: String? = nil) {

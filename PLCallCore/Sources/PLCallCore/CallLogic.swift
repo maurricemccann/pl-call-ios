@@ -128,6 +128,13 @@ public enum BridgeBody {
                input: input, tool_use_id: toolUseId)
     }
 
+    /// A typed answer, or several picked options (multi-select): the strings go through as they are.
+    public static func dialog(requestId: String, toolUseId: String?, question: PermissionRequest.Question, chosen: [String], input: JSONValue?) -> Dialog {
+        Dialog(request_id: requestId,
+               answers: [.init(question: question.question, header: question.header, options: chosen)],
+               input: input, tool_use_id: toolUseId)
+    }
+
     public static func json<T: Encodable>(_ body: T) -> Data {
         let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]
         return (try? e.encode(body)) ?? Data("{}".utf8)

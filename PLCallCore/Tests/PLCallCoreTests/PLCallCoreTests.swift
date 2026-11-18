@@ -220,3 +220,74 @@ final class HeardTests: XCTestCase {
         XCTAssertEqual(doubt?["conf"] as? Double, 0.31)
     }
 }
+
+final class TapModeTests: XCTestCase {
+    private func permission(_ id: String) -> Ask { .permission(requestId: id, toolUseId: nil, forWhat: "Run a command", what: "ls") }
+    private func question(_ id: String) -> Ask {
+        .question(requestId: id, toolUseId: nil, question: PermissionRequest.Question(question: "Which?", header: "", options: ["A", "B"]), input: nil)
+    }
+
+    func testOldBoolMigratesAndStoredModeWins() {
+        XCTAssertEqual(ListenMode.resolve(stored: nil, legacyHandsFree: nil), .handsFree)
+        XCTAssertEqual(ListenMode.resolve(stored: nil, legacyHandsFree: false), .push)
+        XCTAssertEqual(ListenMode.resolve(stored: "tap", legacyHandsFree: true), .tap)
+        XCTAssertEqual(ListenMode.resolve(stored: "nonsense", legacyHandsFree: false), .push)
+    }
+
+    func testAWaitingAskIsNeverAnsweredOrReplacedByANewerOne() {
+        var q = AskQueue()
+        XCTAssertEqual(q.raise(permission("a"), queueing: true), .showing)
+        XCTAssertEqual(q.raise(question("b"), queueing: true), .queued(position: 1))
+        XCTAssertEqual(q.raise(permission("c"), queueing: true), .queued(position: 2))
+        XCTAssertEqual(q.current, permission("a"))   // the first one is still the one on screen
+        XCTAssertEqual(q.waiting.count, 2)
+    }
+
+    func testTheSameRequestAgainChangesNothing() {
+        var q = AskQueue()
+        _ = q.raise(permission("a"), queueing: true)
+        _ = q.raise(question("b"), queueing: true)
+        XCTAssertEqual(q.raise(permission("a"), queueing: true), .already)
+        XCTAssertEqual(q.raise(question("b"), queueing: true), .already)
+        XCTAssertEqual(q.waiting.count, 1)
+    }
+
+    func testOnlyHisTapMovesTheQueueOn() {
+        var q = AskQueue()
+        _ = q.raise(permission("a"), queueing: true)
+        _ = q.raise(question("b"), queueing: true)
+        XCTAssertEqual(q.settle(), question("b"))
+        XCTAssertEqual(q.current, question("b"))
+        XCTAssertNil(q.settle())
+        XCTAssertNil(q.current)
+    }
+
+    func testAWithdrawnAskClearsAndTheNextStepsUp() {
+        var q = AskQueue()
+        _ = q.raise(permission("a"), queueing: true)
+        _ = q.raise(question("b"), queueing: true)
+        _ = q.raise(permission("c"), queueing: true)
+        XCTAssertEqual(q.withdraw(requestId: "b"), .queued)
+        XCTAssertEqual(q.current, permission("a"))
+        XCTAssertEqual(q.withdraw(requestId: "a"), .current(next: permission("c")))
+        XCTAssertEqual(q.current, permission("c"))
+        XCTAssertEqual(q.withdraw(requestId: "zzz"), .none)
+        XCTAssertEqual(q.current, permission("c"))
+    }
+
+    func testClassicModesStillReplace() {
+        var q = AskQueue()
+        _ = q.raise(permission("a"), queueing: false)
+        XCTAssertEqual(q.raise(question("b"), queueing: false), .replaced(permission("a")))
+        XCTAssertEqual(q.current, question("b"))
+        XCTAssertTrue(q.waiting.isEmpty)
+    }
+
+    func testTypedAndMultiAnswersGoThroughAsWritten() throws {
+        let ask = PermissionRequest.Question(question: "Which?", header: "H", options: ["A", "B"])
+        let body = BridgeBody.dialog(requestId: "r", toolUseId: nil, question: ask, chosen: ["A", "my own words"], input: nil)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any]
+        let answers = object?["answers"] as? [[String: Any]]
+        XCTAssertEqual(answers?.first?["options"] as? [String], ["A", "my own words"])
+    }
+}

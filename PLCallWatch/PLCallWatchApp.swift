@@ -23,6 +23,10 @@ struct WatchSnapshot: Sendable {
     var canAnswer = false
     var push = false
     var inCall = false
+    var tap = false
+    var options: [String] = []
+    var more = 0
+    var longQuestion = false   // more than four options, or several may be picked: finish it on the iPhone
 
     init() {}
 
@@ -33,6 +37,10 @@ struct WatchSnapshot: Sendable {
         canAnswer = values["canAnswer"] as? Bool ?? false
         push = values["push"] as? Bool ?? false
         inCall = values["inCall"] as? Bool ?? false
+        tap = values["tap"] as? Bool ?? false
+        options = values["options"] as? [String] ?? []
+        more = values["more"] as? Int ?? 0
+        longQuestion = values["long"] as? Bool ?? false
     }
 }
 
@@ -153,7 +161,23 @@ struct WatchScreen: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(4)
                 }
-                if model.snapshot.ask != nil, model.snapshot.canAnswer {
+                if model.snapshot.more > 0 {
+                    Text("\(model.snapshot.more) more waiting")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if model.snapshot.ask != nil, !model.snapshot.options.isEmpty {
+                    // a question: its answers as buttons, kept until a tap (the iPhone never answers for him)
+                    if model.snapshot.longQuestion {
+                        Text("Open on iPhone to answer.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(model.snapshot.options.enumerated()), id: \.offset) { index, name in
+                            Button(name) { model.send("option", text: String(index)) }
+                        }
+                    }
+                } else if model.snapshot.ask != nil, model.snapshot.canAnswer {
                     Button("Approve") { model.send("approve") }
                         .tint(Self.orange)
                     Button("Deny") { model.send("deny") }
@@ -161,6 +185,12 @@ struct WatchScreen: View {
                         Text("Deny with a message")
                     } onSubmit: { words in
                         model.send("deny", text: words)
+                    }
+                } else if model.snapshot.inCall, model.snapshot.tap {
+                    Button(role: .destructive) {
+                        model.send("end")
+                    } label: {
+                        Label("End", systemImage: "phone.down.fill")
                     }
                 } else if model.snapshot.inCall {
                     Button {

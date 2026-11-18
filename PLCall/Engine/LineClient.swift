@@ -117,7 +117,13 @@ actor LineClient {
 
     func dialog(sid: String, requestID: String, toolUseID: String?, question: PermissionRequest.Question, option: Int, input: JSONValue?) async throws {
         guard question.options.indices.contains(option) else { return }
-        let body = BridgeBody.json(BridgeBody.dialog(requestId: requestID, toolUseId: toolUseID, question: question, option: option, input: input))
+        try await dialog(sid: sid, requestID: requestID, toolUseID: toolUseID, question: question, chosen: [question.options[option]], input: input)
+    }
+
+    /// Tap mode: several picked options, or his own typed words, through the same dialog route.
+    func dialog(sid: String, requestID: String, toolUseID: String?, question: PermissionRequest.Question, chosen: [String], input: JSONValue?) async throws {
+        guard !chosen.isEmpty else { return }
+        let body = BridgeBody.json(BridgeBody.dialog(requestId: requestID, toolUseId: toolUseID, question: question, chosen: chosen, input: input))
         _ = try await fetch("rc/api/sessions/\(Self.safe(sid))/dialog", method: "POST", body: body, timeout: 30)
     }
 

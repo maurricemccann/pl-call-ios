@@ -266,7 +266,16 @@ struct CallScreen: View {
                 }
                 .glassControl()
             }
-            if micMeter, model.isInCall {
+            if model.moreWaiting > 0 {
+                Text(model.moreWaiting == 1 ? "1 more waiting" : "\(model.moreWaiting) more waiting")
+                    .plFont(.footnote, emphasized: true)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("\(model.moreWaiting) more questions waiting behind this one")
+            }
+            if model.answeredAtPC {
+                NoteLine(symbol: "checkmark.circle.fill", tint: T.call, text: "Answered at the PC")
+            }
+            if micMeter, model.isInCall, !model.tapMode {
                 MicMeter(model: model)
             }
             Text(model.statusLine)
@@ -282,12 +291,13 @@ struct CallScreen: View {
 
     // MARK: Controls
 
-    /// AUTO | PUSH as two segments (his ruling 11-12: the single circle was only for the R1's tiny screen).
+    /// AUTO | PUSH | TAP as three segments (his ruling 11-12: the single circle was only for the R1's tiny screen).
     /// The chosen one is filled: orange for AUTO, blue for PUSH.
     private var modeSwitch: some View {
         HStack(spacing: 0) {
-            modeButton("AUTO", handsFree: true)
-            modeButton("PUSH", handsFree: false)
+            modeButton("AUTO", .handsFree)
+            modeButton("PUSH", .push)
+            modeButton("TAP", .tap)
         }
         .padding(.horizontal, 3)
         .glassEffect(.regular.interactive(), in: Capsule())
@@ -296,13 +306,13 @@ struct CallScreen: View {
         .accessibilityLabel("Listening mode")
     }
 
-    private func modeButton(_ title: String, handsFree: Bool) -> some View {
-        let selected = model.handsFree == handsFree
+    private func modeButton(_ title: String, _ mode: ListenMode) -> some View {
+        let selected = model.listenMode == mode
         return Button {
             selectTick += 1
             if !selected {
-                model.setHandsFree(handsFree)
-            } else if !handsFree && model.isInCall {
+                model.setListenMode(mode)
+            } else if mode == .push && model.isInCall {
                 model.talk()   // already on PUSH: a press talks, as on the R1
             }
         } label: {
@@ -312,12 +322,21 @@ struct CallScreen: View {
                 .foregroundStyle(selected ? Color.white : Color.secondary)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 38)
-                .background(selected ? (handsFree ? T.orange : Color.blue) : Color.clear, in: Capsule())
+                .background(selected ? modeTint(mode) : Color.clear, in: Capsule())
                 .frame(minHeight: T.touch)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// AUTO orange, PUSH blue, TAP indigo: the chosen mode is never read by colour alone, the word is on it.
+    private func modeTint(_ mode: ListenMode) -> Color {
+        switch mode {
+        case .handsFree: return T.orange
+        case .push: return Color.blue
+        case .tap: return Color.indigo
+        }
     }
 
     private var quickReplies: some View {
@@ -359,7 +378,7 @@ struct CallScreen: View {
     /// One tap while Claude is talking: the voice stops now.
     @ViewBuilder
     private var stopButton: some View {
-        if model.isInCall, model.state == .speaking {
+        if model.isInCall, !model.tapMode, model.state == .speaking {
             Button {
                 selectTick += 1
                 model.stopTalking()
@@ -378,7 +397,7 @@ struct CallScreen: View {
     /// Speaker, the iPhone's earpiece or AirPods, during a call.
     @ViewBuilder
     private var audioButton: some View {
-        if model.isInCall {
+        if model.isInCall, !model.tapMode {
             AudioRouteButton()
                 .frame(width: T.touch, height: T.touch)
                 .glassControl(in: Circle())
@@ -430,7 +449,7 @@ struct CallScreen: View {
 
     @ViewBuilder
     private var talkButton: some View {
-        if !model.handsFree && model.isInCall {
+        if model.listenMode == .push && model.isInCall {
             Button {
                 selectTick += 1
                 model.talk()
@@ -486,10 +505,13 @@ struct CallScreen: View {
             SettingsView(model: model)
         case .question:
             if let question = pendingQuestion {
-                QuestionSheet(question: question) { option in
+                QuestionSheet(question: question, tap: model.tapMode, more: model.moreWaiting, onPick: { option in
                     selectTick += 1
                     model.answerQuestion(option: option)
-                }
+                }, onSend: { words in
+                    approveTick += 1
+                    model.answerQuestion(chosen: words)
+                }, onHide: { panel = nil })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }

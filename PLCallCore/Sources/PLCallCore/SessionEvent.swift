@@ -53,6 +53,7 @@ public struct PermissionRequest: Decodable, Sendable, Equatable {
         public var question: String
         public var header: String
         public var options: [String]
+        public var multiSelect = false   // the question allows more than one answer
     }
 
     public var raw: JSONValue
@@ -65,7 +66,7 @@ public struct PermissionRequest: Decodable, Sendable, Equatable {
         questions = (raw["questions"]?.array ?? []).compactMap { q in
             guard let text = q["question"]?.string else { return nil }
             let opts = (q["options"]?.array ?? []).compactMap { $0["label"]?.string ?? $0.string }
-            return Question(question: text, header: q["header"]?.string ?? "", options: opts)
+            return Question(question: text, header: q["header"]?.string ?? "", options: opts, multiSelect: q["multiSelect"]?.bool ?? false)
         }
     }
 

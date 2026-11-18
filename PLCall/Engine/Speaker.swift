@@ -93,8 +93,12 @@ enum VoiceTuning {
         onFinished?()
     }
 
+    /// Tap mode: nothing is spoken, no cue, no tick, no chime.
+    var silent = false
+
     func speak(_ text: String, voiceID: String, line: LineClient?, tone: Bool = false) {
         stop()
+        guard !silent else { return }
         let sentences = SpokenText.make(text).sentences
         speakingText = sentences.joined(separator: " ")
         let voiceID = voiceID == Self.personal ? voiceID : Self.phone   // on-device voices only (his ruling 11-12)
@@ -144,7 +148,7 @@ enum VoiceTuning {
     var chosenVoice = Speaker.phone
 
     func cue(_ words: String) {
-        guard !isSpeaking else { return }
+        guard !isSpeaking, !silent else { return }
         let utterance = AVSpeechUtterance(string: words)
         utterance.voice = chosenVoice == Self.personal ? (Self.personalVoice() ?? Self.bestVoice()) : Self.bestVoice()
         utterance.rate = Float(VoiceTuning.rate)
@@ -180,7 +184,7 @@ enum VoiceTuning {
 
     /// A very soft short tick: Claude is still working (at most every 3 seconds, never over speech).
     func tick() {
-        guard !isSpeaking else { return }
+        guard !isSpeaking, !silent else { return }
         if let out = engineVoice, out.isReady, let blip = out.notes([(1320, 0.03)]) {
             out.schedule(blip, volume: 0.18)
             return
@@ -197,6 +201,7 @@ enum VoiceTuning {
 
     /// The call connecting (rising) or ending (falling), like a phone call's own sounds.
     func chime(_ kind: Chime) {
+        guard !silent else { return }
         let notes: [(Double, Double)] = kind == .connected ? [(523, 0.07), (659, 0.07), (784, 0.11)] : [(659, 0.09), (523, 0.09), (392, 0.14)]
         // connecting: through the call's engine; ending: the engine is about to stop, so the plain player
         if kind == .connected, let out = engineVoice, out.isReady, let sound = out.notes(notes) {

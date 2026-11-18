@@ -33,8 +33,8 @@ struct SettingsView: View {
         return (value ?? "1") + " (" + (build ?? "?") + ")"
     }
 
-    private var handsFree: Binding<Bool> {
-        Binding(get: { model.handsFree }, set: { model.setHandsFree($0) })
+    private var listenMode: Binding<ListenMode> {
+        Binding(get: { model.listenMode }, set: { model.setListenMode($0) })
     }
 
     private var cues: Binding<Bool> {
@@ -109,14 +109,18 @@ struct SettingsView: View {
                     } label: {
                         row("Voice", value: voiceLabel)
                     }
-                    Toggle(isOn: handsFree) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Hands-free (AUTO)")
-                                .plFont(.body)
-                            Text("Off is PUSH: the mic opens only when you press Talk.")
-                                .plFont(.footnote)
-                                .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Listening")
+                            .plFont(.body)
+                        Picker("Listening", selection: listenMode) {
+                            Text("AUTO").tag(ListenMode.handsFree)
+                            Text("PUSH").tag(ListenMode.push)
+                            Text("TAP").tag(ListenMode.tap)
                         }
+                        .pickerStyle(.segmented)
+                        Text("AUTO listens all the time. PUSH opens the mic only when you press Talk. TAP hears and says nothing: every question waits as buttons until you tap one. Changing between TAP and the others hangs up the call.")
+                            .plFont(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
 

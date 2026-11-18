@@ -94,7 +94,7 @@ struct ApproveCard: View {
             Label("Approve", systemImage: "checkmark")
                 .plFont(.headline)
                 .foregroundStyle(Color.white)
-                .frame(maxWidth: .infinity, minHeight: 50)
+                .frame(maxWidth: .infinity, minHeight: 56)
                 .contentShape(Capsule())
         }
         .glassControl(tint: T.orange)
@@ -108,7 +108,7 @@ struct ApproveCard: View {
             Label("Deny", systemImage: "xmark")
                 .plFont(.headline)
                 .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, minHeight: 50)
+                .frame(maxWidth: .infinity, minHeight: 56)
                 .contentShape(Capsule())
         }
         .glassControl()
