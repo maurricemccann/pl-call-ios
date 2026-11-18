@@ -7,14 +7,19 @@ enum AudioSessionManager {
 
     /// The session for one listening mode (`AudioPlan` holds the choices and is tested on its own).
     /// Auto is the call: voiceChat, no other media. Push to talk is no phone call: the session is taken for a turn, so his music pauses,
-    /// and `deactivate()` lets it resume. Tap mixes with everything and never records.
+    /// and `deactivate()` lets it resume. Tap is playback only: music dips while Claude speaks, `deactivate()` after each utterance
+    /// brings it back to full, and it never records.
     /// No `.bluetoothHighQualityRecording` (his report 11-13, AirPods dead on calls): Apple allows it only in the default mode, and the mic's
     /// voice processing moves the session to voiceChat, where AirPods get no audio at all (same failure: livekit client-sdk-react-native #467).
     static func configure(_ plan: AudioPlan = AudioPlan.plan(for: .handsFree)) throws {
-        var options: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+        var options: AVAudioSession.CategoryOptions = []
         if plan.mixWithOthers { options.insert(.mixWithOthers) }
-        if plan.bluetoothHFP { options.insert(.allowBluetoothHFP) }
-        if plan.category == .playAndRecord { options.insert(.defaultToSpeaker) }
+        if plan.duckOthers { options.insert(.duckOthers) }
+        if plan.category == .playAndRecord {   // these three are valid only with a record category: a playback session would refuse them
+            options.insert(.allowBluetoothA2DP)
+            options.insert(.defaultToSpeaker)
+            if plan.bluetoothHFP { options.insert(.allowBluetoothHFP) }
+        }
         try AVAudioSession.sharedInstance().setCategory(plan.category == .playback ? .playback : .playAndRecord,
                                                         mode: plan.mode == .voiceChat ? .voiceChat : .default, options: options)
     }

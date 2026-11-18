@@ -281,12 +281,14 @@ final class TapModeTests: XCTestCase {
         XCTAssertEqual(ListenMode.resolve(stored: "tap", legacyHandsFree: true, legacyMusicMode: true), .tap)   // a stored choice wins
     }
 
-    func testTapNeverOpensTheMicAndLeavesOtherAudioAlone() {
+    func testTapNeverOpensTheMicAndDucksMusicOnlyWhileClaudeSpeaks() {
         let plan = AudioPlan.plan(for: .tap)
         XCTAssertFalse(plan.opensMic)
         XCTAssertFalse(plan.usesCallKit)
         XCTAssertTrue(plan.mixWithOthers)
-        XCTAssertEqual(plan.category, .playback)
+        XCTAssertTrue(plan.duckOthers)
+        XCTAssertFalse(plan.holdsSessionBetweenTurns)   // released after each utterance so the music returns to full
+        XCTAssertEqual(plan.category, .playback)        // no record category, so no mic permission is ever asked
     }
 
     func testPushOpensTheMicOnlyPerTurnAndLetsMusicResume() {
@@ -294,6 +296,7 @@ final class TapModeTests: XCTestCase {
         XCTAssertTrue(plan.opensMic)
         XCTAssertFalse(plan.micAlwaysOpen)
         XCTAssertFalse(plan.mixWithOthers)             // taking the session pauses his music
+        XCTAssertFalse(plan.duckOthers)
         XCTAssertFalse(plan.holdsSessionBetweenTurns)  // letting it go (notify others) resumes it
         XCTAssertFalse(plan.usesCallKit)
         XCTAssertEqual(plan.category, .playAndRecord)
@@ -322,5 +325,33 @@ final class TapModeTests: XCTestCase {
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any]
         let answers = object?["answers"] as? [[String: Any]]
         XCTAssertEqual(answers?.first?["options"] as? [String], ["A", "my own words"])
+    }
+
+    // MARK: late answers (a watch, Lock Screen or notice button reaching a process that lost the ask)
+
+    private func blocking(_ id: String, seq: Int) -> SessionEvent {
+        let raw: JSONValue = .object(["questions": .array([.object(["question": .string("Keep it?"), "header": .string("H"),
+                                                                   "options": .array([.string("Keep it removed"), .string("Restore it")])])])])
+        return SessionEvent(sequenceNum: seq, type: "control_request", isBlockingControl: true, requestId: id, permissionRequest: PermissionRequest(raw: raw))
+    }
+
+    func testALateAnswerFindsTheAskTheSessionIsStillBlockedOn() {
+        let backlog = [SessionEvent(sequenceNum: 1, role: "assistant", text: "hi"), blocking("r1", seq: 2)]
+        let found = LateAnswer.ask(current: nil, backlog: backlog, requestID: nil)
+        XCTAssertNotNil(found)
+        XCTAssertEqual(found.map(AskQueue.id(of:)), "r1")
+        XCTAssertEqual(LateAnswer.ask(current: nil, backlog: backlog, requestID: "r1").map(AskQueue.id(of:)), "r1")
+    }
+
+    func testALateAnswerForAnotherRequestOrAnAnsweredOneFindsNothing() {
+        let backlog = [blocking("r1", seq: 2), SessionEvent(sequenceNum: 3, role: "assistant", text: "moved on")]
+        XCTAssertNil(LateAnswer.ask(current: nil, backlog: backlog, requestID: nil))   // the backlog no longer ends on the ask
+        XCTAssertNil(LateAnswer.ask(current: nil, backlog: [blocking("r1", seq: 2)], requestID: "other"))
+    }
+
+    func testTheAskInMemoryWinsWhenItMatches() {
+        let held = Ask.permission(requestId: "p1", toolUseId: nil, forWhat: "Run", what: "ls")
+        XCTAssertEqual(LateAnswer.ask(current: held, backlog: [], requestID: "p1"), held)
+        XCTAssertEqual(LateAnswer.ask(current: held, backlog: [], requestID: nil), held)
     }
 }

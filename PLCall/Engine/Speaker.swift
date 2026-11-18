@@ -93,12 +93,11 @@ enum VoiceTuning {
         onFinished?()
     }
 
-    /// Tap mode: nothing is spoken, no cue, no tick, no chime.
+    /// Tap mode: Claude's words are spoken, but no cue, tick or chime sounds over his music.
     var silent = false
 
     func speak(_ text: String, voiceID: String, line: LineClient?, tone: Bool = false) {
         stop()
-        guard !silent else { return }
         let sentences = SpokenText.make(text).sentences
         speakingText = sentences.joined(separator: " ")
         let voiceID = voiceID == Self.personal ? voiceID : Self.phone   // on-device voices only (his ruling 11-12)

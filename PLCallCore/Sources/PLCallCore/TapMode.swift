@@ -14,15 +14,17 @@ public enum ListenMode: String, Sendable, CaseIterable {
 }
 
 /// What each mode does to the phone's audio, as plain values the app turns into an AVAudioSession.
-/// Tap: the mic never opens and his music or video plays on untouched. Push to talk: no phone call; the session is taken only
-/// for a turn, so his music pauses while he talks and resumes after. Auto: a phone call, the mic always open, no other media.
+/// Tap: the mic never opens; Claude is heard over his music, which dips while it speaks and returns to full after each utterance.
+/// Push to talk: no phone call; the session is taken only for a turn, so his music pauses while he talks and resumes after.
+/// Auto: a phone call, the mic always open, no other media.
 public struct AudioPlan: Equatable, Sendable {
     public enum Category: Sendable { case playback, playAndRecord }
     public enum Mode: Sendable { case standard, voiceChat }
 
     public var category: Category
     public var mode: Mode
-    public var mixWithOthers: Bool         // other audio keeps playing, at full volume (never ducked)
+    public var mixWithOthers: Bool         // other audio keeps playing
+    public var duckOthers: Bool            // other audio dips while Claude speaks
     public var usesCallKit: Bool           // a system phone call
     public var opensMic: Bool              // the mic is ever opened
     public var micAlwaysOpen: Bool         // open for the whole call, not only for a turn
@@ -32,13 +34,13 @@ public struct AudioPlan: Equatable, Sendable {
     public static func plan(for mode: ListenMode) -> AudioPlan {
         switch mode {
         case .tap:
-            return AudioPlan(category: .playback, mode: .standard, mixWithOthers: true, usesCallKit: false, opensMic: false,
+            return AudioPlan(category: .playback, mode: .standard, mixWithOthers: true, duckOthers: true, usesCallKit: false, opensMic: false,
                              micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
         case .push:
-            return AudioPlan(category: .playAndRecord, mode: .standard, mixWithOthers: false, usesCallKit: false, opensMic: true,
+            return AudioPlan(category: .playAndRecord, mode: .standard, mixWithOthers: false, duckOthers: false, usesCallKit: false, opensMic: true,
                              micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
         case .handsFree:
-            return AudioPlan(category: .playAndRecord, mode: .voiceChat, mixWithOthers: false, usesCallKit: true, opensMic: true,
+            return AudioPlan(category: .playAndRecord, mode: .voiceChat, mixWithOthers: false, duckOthers: false, usesCallKit: true, opensMic: true,
                              micAlwaysOpen: true, holdsSessionBetweenTurns: true, bluetoothHFP: true)
         }
     }
@@ -106,4 +108,16 @@ public struct AskQueue: Sendable, Equatable {
 
     /// The session changed or the config was forgotten: nothing here belongs to a live request any more.
     public mutating func clear() { current = nil; waiting = [] }
+}
+
+/// A button on the watch, the Lock Screen or a notice can reach an app process that has not rebuilt the waiting ask yet
+/// (the process was cold, or the ask was dropped). This picks the ask the button was meant for from what the app holds
+/// and what the session's own backlog says is still waiting. nil = nothing is waiting any more (say so, never go quiet).
+public enum LateAnswer {
+    public static func ask(current: Ask?, backlog: [SessionEvent], requestID: String?) -> Ask? {
+        func matches(_ ask: Ask) -> Bool { requestID == nil || requestID == AskQueue.id(of: ask) }
+        if let current, matches(current) { return current }
+        if let waiting = EventReducer.waitingAsk(backlog), matches(waiting) { return waiting }
+        return nil
+    }
 }

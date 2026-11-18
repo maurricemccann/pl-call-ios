@@ -26,6 +26,7 @@ struct WatchSnapshot: Sendable {
     var tap = false
     var options: [String] = []
     var more = 0
+    var askID: String?
     var longQuestion = false   // more than four options, or several may be picked: finish it on the iPhone
 
     init() {}
@@ -41,6 +42,7 @@ struct WatchSnapshot: Sendable {
         options = values["options"] as? [String] ?? []
         more = values["more"] as? Int ?? 0
         longQuestion = values["long"] as? Bool ?? false
+        askID = values["askID"] as? String
     }
 }
 
@@ -60,7 +62,7 @@ struct WatchSnapshot: Sendable {
 
     func send(_ command: String, text: String? = nil) {
         note = nil
-        link.send(command, text: text)
+        link.send(command, text: text, requestID: snapshot.askID)
     }
 }
 
@@ -76,13 +78,30 @@ final class WatchSide: NSObject, WCSessionDelegate, @unchecked Sendable {
         WCSession.default.activate()
     }
 
-    func send(_ command: String, text: String?) {
+    func send(_ command: String, text: String?, requestID: String?) {
         var message: [String: Any] = ["cmd": command]
         if let text, !text.isEmpty { message["text"] = text }
-        WCSession.default.sendMessage(message, replyHandler: nil) { error in
-            let words = error.localizedDescription
-            Task { @MainActor in self.onFailure?("The iPhone did not answer: \(words)") }
+        if let requestID { message["rid"] = requestID }
+        let session = WCSession.default
+        // Not reachable (the iPhone app is not running or the phone is away): sendMessage would fail at once. Queue it instead, so it is
+        // delivered when the iPhone is back, and say so. A queued answer names its request, so it cannot answer the wrong question.
+        guard session.isReachable else {
+            queue(command, text, requestID)
+            return
         }
+        session.sendMessage(message, replyHandler: nil) { error in
+            self.queue(command, text, requestID)   // the live send failed: it must not vanish
+            let words = error.localizedDescription
+            Task { @MainActor in self.onFailure?("The iPhone did not answer live (\(words)). Your tap is queued and goes when it is back.") }
+        }
+    }
+
+    private func queue(_ command: String, _ text: String?, _ requestID: String?) {
+        var message: [String: Any] = ["cmd": command]
+        if let text, !text.isEmpty { message["text"] = text }
+        if let requestID { message["rid"] = requestID }
+        WCSession.default.transferUserInfo(message)
+        Task { @MainActor in self.onFailure?("The iPhone is out of reach. Your tap is queued and goes when it is back.") }
     }
 
     private func took(_ values: [String: Any]) {

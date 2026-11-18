@@ -123,7 +123,7 @@ struct Turn: Identifiable, Equatable {
         static let working = "Claude is working"
         static let speaking = "Speaking"
         static let waiting = "Waiting for your answer"
-        static let tap = "Tap mode: nothing is heard or said"
+        static let tap = "Tap mode: the mic is closed. Answer with a tap"
         static let noSession = "No live session. Start Claude Code on the PC first."
         static let keyRefused = "The call key was refused. Load your config again."
         static let title = "Claude"
@@ -345,10 +345,6 @@ struct Turn: Identifiable, Equatable {
     }
 
     func replay() {
-        if tapMode {
-            statusLine = "Tap mode says nothing aloud. The words are above."
-            return
-        }
         if callKit.isRinging {
             _ = callKit.endCall()
             return
@@ -466,6 +462,10 @@ struct Turn: Identifiable, Equatable {
 
     func answerPermission(allow: Bool, message: String?) {
         probe.sawIntent()
+        guard pendingAsk != nil else {
+            lateAnswer(requestID: nil) { self.answerPermission(allow: allow, message: message) }
+            return
+        }
         guard let ask = pendingAsk, case .permission(let requestID, let toolUseID, _, _) = ask else { return }
         resolve(ask)
         note(allow ? "Allowed." : "Denied.")
@@ -485,8 +485,38 @@ struct Turn: Identifiable, Equatable {
     }
 
     func answerQuestion(option: Int) {
+        guard pendingAsk != nil else {
+            lateAnswer(requestID: nil) { self.answerQuestion(option: option) }
+            return
+        }
         guard let ask = pendingAsk, case .question(_, _, let question, _) = ask, question.options.indices.contains(option) else { return }
         answerQuestion(chosen: [question.options[option]])
+    }
+
+    /// A button on the watch, the Lock Screen or a notice reached an app process that holds no waiting ask (it was cold, or the
+    /// ask was dropped). Before this, the answer was silently thrown away while the button showed success (his report 11-17:
+    /// answered on the watch, never reached the session). Rebuild the ask from the session's own backlog, or say plainly it is gone.
+    private func lateAnswer(requestID: String?, then answer: @escaping @MainActor () -> Void) {
+        Task {
+            _ = await loading?.value
+            var backlog: [SessionEvent] = []
+            if let line {
+                if sid == nil, let live = try? await line.sessions() {
+                    sid = (live.first { $0.id == sessionFromNotice } ?? live.first { $0.id == chosenSession } ?? live.first)?.id
+                }
+                if let sid { backlog = (try? await line.events(sid: sid, limit: 60)) ?? [] }
+            }
+            guard let ask = LateAnswer.ask(current: pendingAsk, backlog: backlog, requestID: requestID) else {
+                let words = "Your answer was not sent: nothing is waiting any more (it was answered, or the session moved on)."
+                RingLog.note("late answer: nothing waiting")
+                note(words)
+                lastError = words
+                NotificationHub.shared.postNote(title: "Answer not sent", body: words)
+                return
+            }
+            if pendingAsk == nil { raise(ask) }
+            answer()
+        }
     }
 
     /// Tap mode: several picked options, or his own typed words ("Other...").
@@ -552,17 +582,29 @@ struct Turn: Identifiable, Equatable {
     }
 
     /// A button on the watch app. It can only steer a call that is already up: the mic cannot start from the background.
-    func watchCommand(_ command: String, text: String?) {
+    func watchCommand(_ command: String, text: String?, requestID: String? = nil) {
         switch command {
-        case "option": if let text, let index = Int(text) { answerQuestion(option: index) }
-        case "approve": answerPermission(allow: true, message: text)
-        case "deny": answerPermission(allow: false, message: text)
+        case "option": if let text, let index = Int(text) { watchAnswer(requestID) { self.answerQuestion(option: index) } }
+        case "approve": watchAnswer(requestID) { self.answerPermission(allow: true, message: text) }
+        case "deny": watchAnswer(requestID) { self.answerPermission(allow: false, message: text) }
         case "replay": replay()
         case "talk": if isInCall { talk() }
         case "end": endCall()
         case "state": publish()
         default: break
         }
+    }
+
+    /// An answer from the wrist names the request it was for, so one that arrives late (the watch queues it when the iPhone is out of
+    /// reach) cannot answer a different question. A stale one is said out loud on the screen, never dropped in silence.
+    private func watchAnswer(_ requestID: String?, _ run: @escaping @MainActor () -> Void) {
+        if let requestID, !requestID.isEmpty, let ask = pendingAsk, Self.id(of: ask) != requestID {
+            let words = "A watch answer was not sent: it was for a question that is no longer waiting."
+            note(words)
+            lastError = words
+            return
+        }
+        run()   // with no ask held, answerQuestion/answerPermission rebuild it from the session (lateAnswer)
     }
 
     /// The AirPods press, as the system's mute. In AUTO it mutes; in PUSH it is push-to-talk: the system's mute is
@@ -831,6 +873,11 @@ struct Turn: Identifiable, Equatable {
         }
         if action.hasPrefix(NotificationHub.optionPrefix) || (action == NotificationHub.replyID && isQuestion(requestID)) {
             _ = await loading?.value
+            if pendingAsk == nil, let index = Int(action.dropFirst(NotificationHub.optionPrefix.count)), action.hasPrefix(NotificationHub.optionPrefix) {
+                // a cold process holds no ask yet: rebuild it from the session, never drop the tap in silence
+                lateAnswer(requestID: requestID) { self.answerQuestion(option: index) }
+                return
+            }
             guard let ask = pendingAsk, case .question(let waiting, _, _, _) = ask, waiting == requestID else { return }
             if let index = Int(action.dropFirst(NotificationHub.optionPrefix.count)), action.hasPrefix(NotificationHub.optionPrefix) {
                 answerQuestion(option: index)
@@ -1087,7 +1134,7 @@ struct Turn: Identifiable, Equatable {
             resolve(ask)
             rest()
         }
-        if outputs.isEmpty, speakProgress, !tapMode, isInCall, awaitingReply, event.role == "assistant",
+        if outputs.isEmpty, speakProgress, isInCall, awaitingReply, event.role == "assistant",
            let words = event.text?.trimmingCharacters(in: .whitespacesAndNewlines), !words.isEmpty {
             // A line written while the work goes on. The last line of a turn is followed at once by the turn end,
             // so only a line still standing after 2.5 seconds is progress.
@@ -1232,7 +1279,7 @@ struct Turn: Identifiable, Equatable {
     private func present(_ ask: Ask) {
         switch ask {
         case .permission(let requestID, let toolUseID, let forWhat, let what):
-            let line = tapMode ? forWhat : forWhat + " Say yes or no."
+            let line = tapMode ? forWhat + " Tap Approve or Deny." : forWhat + " Say yes or no."
             append(.claude, what.isEmpty ? line : line + "\n" + what)
             NotificationHub.shared.postPermission(requestID: requestID, toolUseID: toolUseID, body: forWhat, sid: sid)
             if isInCall, !tapMode { head.start() }   // a ring starts its own head reading; with no call nothing needs it (battery)
@@ -1245,7 +1292,9 @@ struct Turn: Identifiable, Equatable {
         statusLine = Say.waiting
         publish(alert: true)
         if tapMode {
-            nagWhileWaiting()   // never spoken, never rung: a buzz and a notice every minute, until he taps
+            // read aloud over his music (it dips), then it waits: a buzz and a notice every minute until he taps
+            if takeTapAudio() { speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: false) }
+            nagWhileWaiting()
         } else if isInCall, !onHold {
             if listenMode == .push, !pushTurnOpen, !pushAudioHeld {
                 try? AudioSessionManager.activate(AudioPlan.plan(for: .push))   // the question is read aloud: the audio is taken until it is answered
@@ -1287,10 +1336,10 @@ struct Turn: Identifiable, Equatable {
     private func spokenLine(for ask: Ask) -> String {
         switch ask {
         case .permission(_, _, let forWhat, _):
-            return forWhat + " Say yes or no."
+            return forWhat + (tapMode ? " Tap Approve or Deny." : " Say yes or no.")
         case .question(_, _, let question, _):
             let options = question.options.enumerated().map { "Option \($0.offset + 1): \($0.element)." }.joined(separator: " ")
-            return question.question + " " + options
+            return question.question + " " + options + (tapMode ? " Tap your answer." : "")
         }
     }
 
@@ -1621,11 +1670,9 @@ struct Turn: Identifiable, Equatable {
     }
 
     private func voice(_ text: String, voiceID id: String? = nil, tone: Bool = false) {
-        guard !tapMode else {
-            rest()
-            return
-        }
-        if !isInCall {
+        if tapMode {
+            guard takeTapAudio() else { return }
+        } else if !isInCall {
             do {
                 try AudioSessionManager.activate()
             } catch {
@@ -1646,6 +1693,11 @@ struct Turn: Identifiable, Equatable {
             AudioSessionManager.deactivate()
             rest()
             stayReachableIfWanted()
+            return
+        }
+        if tapMode {
+            releaseTapAudio()   // no mic to discard: the music returns to full
+            rest()
             return
         }
         let listener = self.listener
@@ -1680,8 +1732,26 @@ struct Turn: Identifiable, Equatable {
         keepAlive.start()   // silent audio only, so the line stays open with the screen off; it never touches the mic
         Task { _ = await NotificationHub.shared.authorize() }   // the notices are how a waiting question finds him
         connect()
-        note("Tap mode. Nothing is heard or said. Every question waits here until you tap.")
+        note("Tap mode. The mic stays closed. You hear Claude over your music, and every question waits until you tap.")
         rest()
+    }
+
+    /// Tap: take a playback session that dips his music for as long as Claude speaks. No mic, no call.
+    private func takeTapAudio() -> Bool {
+        do {
+            try AudioSessionManager.activate(AudioPlan.plan(for: .tap))
+            return true
+        } catch {
+            lastError = "The speaker is not available: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Tap: the utterance is over. Let the audio go with "notify others" so his music comes back to full, then keep the line open.
+    private func releaseTapAudio() {
+        keepAlive.stop()
+        AudioSessionManager.deactivate()
+        if isInCall { keepAlive.start() }
     }
 
     /// Push to talk: no phone call, no mic and no audio session yet, so his music plays on. The session is taken when he pushes.
@@ -1965,7 +2035,7 @@ struct Turn: Identifiable, Equatable {
         }
         WatchLink.shared.send(state: state.rawValue, line: String(shown.prefix(200)), ask: askText.map { String($0.prefix(200)) },
                               canAnswer: canAnswer, push: !handsFree && !tapMode, inCall: isInCall, tap: tapMode, options: options,
-                              more: moreWaiting, longQuestion: longQuestion)
+                              more: moreWaiting, longQuestion: longQuestion, askID: pendingAsk.map { Self.id(of: $0) })
     }
 
     private func append(_ who: Turn.Who, _ text: String, image: String? = nil) {
