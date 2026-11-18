@@ -30,18 +30,19 @@ public struct AudioPlan: Equatable, Sendable {
     public var micAlwaysOpen: Bool         // open for the whole call, not only for a turn
     public var holdsSessionBetweenTurns: Bool   // false: the session is let go between turns, so other players resume
     public var bluetoothHFP: Bool
+    public var claimsRemoteCommands: Bool   // the AirPods and lock-screen buttons, and "Now Playing": only a real call takes them from his music
 
     public static func plan(for mode: ListenMode) -> AudioPlan {
         switch mode {
         case .tap:
             return AudioPlan(category: .playback, mode: .standard, mixWithOthers: true, duckOthers: true, usesCallKit: false, opensMic: false,
-                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
+                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false, claimsRemoteCommands: false)
         case .push:
             return AudioPlan(category: .playAndRecord, mode: .standard, mixWithOthers: false, duckOthers: false, usesCallKit: false, opensMic: true,
-                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
+                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false, claimsRemoteCommands: false)
         case .handsFree:
             return AudioPlan(category: .playAndRecord, mode: .voiceChat, mixWithOthers: false, duckOthers: false, usesCallKit: true, opensMic: true,
-                             micAlwaysOpen: true, holdsSessionBetweenTurns: true, bluetoothHFP: true)
+                             micAlwaysOpen: true, holdsSessionBetweenTurns: true, bluetoothHFP: true, claimsRemoteCommands: true)
         }
     }
 }

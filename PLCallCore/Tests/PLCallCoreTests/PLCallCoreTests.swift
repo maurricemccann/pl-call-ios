@@ -311,6 +311,12 @@ final class TapModeTests: XCTestCase {
         XCTAssertEqual(plan.mode, .voiceChat)
     }
 
+    func testOnlyAutoTakesTheAirPodsButtonsFromHisMusic() {
+        XCTAssertFalse(AudioPlan.plan(for: .tap).claimsRemoteCommands)
+        XCTAssertFalse(AudioPlan.plan(for: .push).claimsRemoteCommands)
+        XCTAssertTrue(AudioPlan.plan(for: .handsFree).claimsRemoteCommands)
+    }
+
     func testClassicModesStillReplace() {
         var q = AskQueue()
         _ = q.raise(permission("a"), queueing: false)

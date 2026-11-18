@@ -569,6 +569,7 @@ struct Turn: Identifiable, Equatable {
         tapMode = mode == .tap
         handsFree = mode == .handsFree
         speaker.silent = tapMode
+        if !AudioPlan.plan(for: mode).claimsRemoteCommands { remote.disable() }   // mid-call switch: give the buttons back to his music
         UserDefaults.standard.set(mode.rawValue, forKey: Keys.listenMode)
         UserDefaults.standard.set(handsFree, forKey: Keys.handsFree)
         armed = false
@@ -593,6 +594,12 @@ struct Turn: Identifiable, Equatable {
         case "state": publish()
         default: break
         }
+    }
+
+    /// The AirPods press and "Now Playing" belong to his music in Tap and Push (his ruling 11-17): only Auto, a real call, takes them.
+    private func enableRemote() {
+        guard AudioPlan.plan(for: listenMode).claimsRemoteCommands else { return }
+        remote.enable()
     }
 
     /// An answer from the wrist names the request it was for, so one that arrives late (the watch queues it when the iPhone is out of
@@ -800,7 +807,7 @@ struct Turn: Identifiable, Equatable {
         }
         holdAwake("ring")   // until the background line is back after the ring, or a call takes over
         head.start()   // two nods answer the ring, two shakes decline it
-        remote.enable()   // the AirPods stem: one press answers, two decline
+        enableRemote()   // the AirPods stem: one press answers, two decline
         keepAlive.stop()
         AudioSessionManager.deactivate()
         let refused = await callKit.ring(reason: reason)
@@ -959,7 +966,7 @@ struct Turn: Identifiable, Equatable {
         speaker.engineVoice = listener.voice   // one audio engine for the mic, the voice and the tones (his pick)
         speaker.onFinished = { [weak self] in self?.spokeDone() }
         speaker.onFailed = { [weak self] message in self?.voiceFailed(message) }
-        callKit.onStarted = { [weak self] in self?.remote.enable() }
+        callKit.onStarted = { [weak self] in self?.enableRemote() }
         callKit.onStartFailed = { [weak self] reason in self?.startWithoutCallKit(reason) }
         callKit.onAudioActive = { [weak self] in self?.audioActivated() }
         callKit.onAudioInactive = { [weak self] in self?.audioDeactivated() }
@@ -1804,7 +1811,7 @@ struct Turn: Identifiable, Equatable {
         do {
             try AudioSessionManager.activate()
             ownsAudio = true
-            remote.enable()
+            enableRemote()
             note("The system refused the call (\(reason)). It runs without it, and may stop when the phone locks.")
             audioActivated()
         } catch {
@@ -1937,7 +1944,7 @@ struct Turn: Identifiable, Equatable {
         }
         isInCall = true
         activity.start(title: Say.title)
-        remote.enable()
+        enableRemote()
         set(.connecting, Say.connecting)
     }
 
