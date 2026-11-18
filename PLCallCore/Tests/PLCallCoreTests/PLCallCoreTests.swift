@@ -275,6 +275,39 @@ final class TapModeTests: XCTestCase {
         XCTAssertEqual(q.current, permission("c"))
     }
 
+    func testOldMusicModeBecomesPushToTalk() {
+        XCTAssertEqual(ListenMode.resolve(stored: nil, legacyHandsFree: true, legacyMusicMode: true), .push)
+        XCTAssertEqual(ListenMode.resolve(stored: nil, legacyHandsFree: true, legacyMusicMode: false), .handsFree)
+        XCTAssertEqual(ListenMode.resolve(stored: "tap", legacyHandsFree: true, legacyMusicMode: true), .tap)   // a stored choice wins
+    }
+
+    func testTapNeverOpensTheMicAndLeavesOtherAudioAlone() {
+        let plan = AudioPlan.plan(for: .tap)
+        XCTAssertFalse(plan.opensMic)
+        XCTAssertFalse(plan.usesCallKit)
+        XCTAssertTrue(plan.mixWithOthers)
+        XCTAssertEqual(plan.category, .playback)
+    }
+
+    func testPushOpensTheMicOnlyPerTurnAndLetsMusicResume() {
+        let plan = AudioPlan.plan(for: .push)
+        XCTAssertTrue(plan.opensMic)
+        XCTAssertFalse(plan.micAlwaysOpen)
+        XCTAssertFalse(plan.mixWithOthers)             // taking the session pauses his music
+        XCTAssertFalse(plan.holdsSessionBetweenTurns)  // letting it go (notify others) resumes it
+        XCTAssertFalse(plan.usesCallKit)
+        XCTAssertEqual(plan.category, .playAndRecord)
+    }
+
+    func testAutoIsAFullCallWithNoOtherMedia() {
+        let plan = AudioPlan.plan(for: .handsFree)
+        XCTAssertTrue(plan.usesCallKit)
+        XCTAssertTrue(plan.micAlwaysOpen)
+        XCTAssertFalse(plan.mixWithOthers)
+        XCTAssertTrue(plan.holdsSessionBetweenTurns)
+        XCTAssertEqual(plan.mode, .voiceChat)
+    }
+
     func testClassicModesStillReplace() {
         var q = AskQueue()
         _ = q.raise(permission("a"), queueing: false)

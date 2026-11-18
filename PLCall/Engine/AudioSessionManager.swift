@@ -5,23 +5,22 @@ import AVFoundation
 enum AudioSessionManager {
     enum Change: Sendable { case interrupted, resumed, routeChanged, engineReset }
 
-    /// `music`: no phone-style call. Other audio keeps playing, headphones stay in full quality (A2DP).
+    /// The session for one listening mode (`AudioPlan` holds the choices and is tested on its own).
+    /// Auto is the call: voiceChat, no other media. Push to talk is no phone call: the session is taken for a turn, so his music pauses,
+    /// and `deactivate()` lets it resume. Tap mixes with everything and never records.
     /// No `.bluetoothHighQualityRecording` (his report 11-13, AirPods dead on calls): Apple allows it only in the default mode, and the mic's
     /// voice processing moves the session to voiceChat, where AirPods get no audio at all (same failure: livekit client-sdk-react-native #467).
-    static func configure(music: Bool = false) throws {
-        if music {
-            try AVAudioSession.sharedInstance().setCategory(
-                .playAndRecord, mode: .default,
-                options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker])   // as before 43dbb98: AirPods play, music stays
-        } else {
-            try AVAudioSession.sharedInstance().setCategory(
-                .playAndRecord, mode: .voiceChat,
-                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
-        }
+    static func configure(_ plan: AudioPlan = AudioPlan.plan(for: .handsFree)) throws {
+        var options: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+        if plan.mixWithOthers { options.insert(.mixWithOthers) }
+        if plan.bluetoothHFP { options.insert(.allowBluetoothHFP) }
+        if plan.category == .playAndRecord { options.insert(.defaultToSpeaker) }
+        try AVAudioSession.sharedInstance().setCategory(plan.category == .playback ? .playback : .playAndRecord,
+                                                        mode: plan.mode == .voiceChat ? .voiceChat : .default, options: options)
     }
 
-    static func activate(music: Bool = false) throws {
-        try configure(music: music)
+    static func activate(_ plan: AudioPlan = AudioPlan.plan(for: .handsFree)) throws {
+        try configure(plan)
         try AVAudioSession.sharedInstance().setActive(true)
     }
 

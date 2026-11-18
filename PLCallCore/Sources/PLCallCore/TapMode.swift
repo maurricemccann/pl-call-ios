@@ -4,10 +4,43 @@ import Foundation
 public enum ListenMode: String, Sendable, CaseIterable {
     case handsFree, push, tap
 
-    /// The stored mode, or the old hands-free bool from before Tap existed.
-    public static func resolve(stored: String?, legacyHandsFree: Bool?) -> ListenMode {
+    /// The stored mode; else the old settings: the separate music mode becomes Push to talk (music stays out of the way
+    /// until he pushes), then the old hands-free bool.
+    public static func resolve(stored: String?, legacyHandsFree: Bool?, legacyMusicMode: Bool? = nil) -> ListenMode {
         if let stored, let mode = ListenMode(rawValue: stored) { return mode }
+        if legacyMusicMode == true { return .push }
         return (legacyHandsFree ?? true) ? .handsFree : .push
+    }
+}
+
+/// What each mode does to the phone's audio, as plain values the app turns into an AVAudioSession.
+/// Tap: the mic never opens and his music or video plays on untouched. Push to talk: no phone call; the session is taken only
+/// for a turn, so his music pauses while he talks and resumes after. Auto: a phone call, the mic always open, no other media.
+public struct AudioPlan: Equatable, Sendable {
+    public enum Category: Sendable { case playback, playAndRecord }
+    public enum Mode: Sendable { case standard, voiceChat }
+
+    public var category: Category
+    public var mode: Mode
+    public var mixWithOthers: Bool         // other audio keeps playing, at full volume (never ducked)
+    public var usesCallKit: Bool           // a system phone call
+    public var opensMic: Bool              // the mic is ever opened
+    public var micAlwaysOpen: Bool         // open for the whole call, not only for a turn
+    public var holdsSessionBetweenTurns: Bool   // false: the session is let go between turns, so other players resume
+    public var bluetoothHFP: Bool
+
+    public static func plan(for mode: ListenMode) -> AudioPlan {
+        switch mode {
+        case .tap:
+            return AudioPlan(category: .playback, mode: .standard, mixWithOthers: true, usesCallKit: false, opensMic: false,
+                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
+        case .push:
+            return AudioPlan(category: .playAndRecord, mode: .standard, mixWithOthers: false, usesCallKit: false, opensMic: true,
+                             micAlwaysOpen: false, holdsSessionBetweenTurns: false, bluetoothHFP: false)
+        case .handsFree:
+            return AudioPlan(category: .playAndRecord, mode: .voiceChat, mixWithOthers: false, usesCallKit: true, opensMic: true,
+                             micAlwaysOpen: true, holdsSessionBetweenTurns: true, bluetoothHFP: true)
+        }
     }
 }
 

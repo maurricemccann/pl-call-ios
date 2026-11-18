@@ -42,7 +42,6 @@ struct Turn: Identifiable, Equatable {
     var tapMode = false                  // Tap: nothing is heard or said, every question waits for his tap
     var answeredAtPC = false             // shown for 2 s when the session withdraws a waiting ask
     var spokenCues = true                // the tone before Claude talks, "Listening" and "Got it"
-    var musicMode = false                // no phone-style call: other audio keeps playing
     var workBeat = 0                     // one per session event while Claude works: the avatar's glow sweeps on each
     var workingSounds = true             // a soft tick on those events, so a long turn is not silence
     var isMuted = false                  // his mic is muted (the AirPods press in AUTO, or the screen)
@@ -136,7 +135,7 @@ struct Turn: Identifiable, Equatable {
         static let listenMode = "plcall.listenMode"
         static let systemFont = "plcall.usesSystemFont"
         static let cues = "plcall.spokenCues"
-        static let music = "plcall.musicMode"
+        static let music = "plcall.musicMode"   // read once: the old separate music mode migrates to Push to talk
         static let progress = "plcall.speakProgress"
         static let wake = "plcall.wakeWord"
         static let workTicks = "plcall.workingSounds"
@@ -150,12 +149,12 @@ struct Turn: Identifiable, Equatable {
 
     private init() {
         let mode = ListenMode.resolve(stored: UserDefaults.standard.string(forKey: Keys.listenMode),
-                                      legacyHandsFree: UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool)
+                                      legacyHandsFree: UserDefaults.standard.object(forKey: Keys.handsFree) as? Bool,
+                                      legacyMusicMode: UserDefaults.standard.object(forKey: Keys.music) as? Bool)
         handsFree = mode == .handsFree
         tapMode = mode == .tap
         speaker.silent = tapMode
         spokenCues = UserDefaults.standard.object(forKey: Keys.cues) as? Bool ?? true
-        musicMode = UserDefaults.standard.bool(forKey: Keys.music)
         speakProgress = UserDefaults.standard.object(forKey: Keys.progress) as? Bool ?? true
         wakeWord = UserDefaults.standard.bool(forKey: Keys.wake)
         workingSounds = UserDefaults.standard.object(forKey: Keys.workTicks) as? Bool ?? true
@@ -280,7 +279,7 @@ struct Turn: Identifiable, Equatable {
                 return
             }
             guard self.isInCall else { return }
-            if self.musicMode { self.startInMusicMode() } else { self.callKit.startCall() }
+            if self.listenMode == .push { self.startInPushMode() } else { self.callKit.startCall() }
             _ = await NotificationHub.shared.authorize()   // after the call is up, so a pending prompt never holds the call back
         }
     }
@@ -319,6 +318,11 @@ struct Turn: Identifiable, Equatable {
         }
         guard isInCall else {
             startCall()
+            return
+        }
+        if listenMode == .push, !pushTurnOpen {
+            speaker.stop()
+            beginPushTurn()
             return
         }
         if !handsFree, armed, state == .hearing {
@@ -811,12 +815,6 @@ struct Turn: Identifiable, Equatable {
         UserDefaults.standard.set(on, forKey: Keys.short)
     }
 
-    /// Takes effect at the next call.
-    func setMusicMode(_ on: Bool) {
-        musicMode = on
-        UserDefaults.standard.set(on, forKey: Keys.music)
-    }
-
     // MARK: called by the other engine parts
 
     /// A notification action. It may arrive in a process the system just launched in the background, so it waits for the config.
@@ -1249,6 +1247,11 @@ struct Turn: Identifiable, Equatable {
         if tapMode {
             nagWhileWaiting()   // never spoken, never rung: a buzz and a notice every minute, until he taps
         } else if isInCall, !onHold {
+            if listenMode == .push, !pushTurnOpen, !pushAudioHeld {
+                try? AudioSessionManager.activate(AudioPlan.plan(for: .push))   // the question is read aloud: the audio is taken until it is answered
+                ownsAudio = true
+                pushAudioHeld = true
+            }
             spokenAsk = Self.id(of: ask)
             speaker.speak(spokenLine(for: ask), voiceID: voiceID, line: line, tone: spokenCues)
         } else if isInCall {
@@ -1681,16 +1684,50 @@ struct Turn: Identifiable, Equatable {
         rest()
     }
 
-    private func startInMusicMode() {
+    /// Push to talk: no phone call, no mic and no audio session yet, so his music plays on. The session is taken when he pushes.
+    private func startInPushMode() {
+        connectedOnce = true
+        keepAlive.start()   // silent and mixed with other audio: only keeps the line open with the screen off
+        connect()
+        watchForSleep()
+        note("Push to talk. Your music plays on until you press Talk.")
+        rest()
+    }
+
+    /// He pushed: take the audio (his music pauses) and open the mic for this turn.
+    private func beginPushTurn() {
+        guard isInCall, !pushTurnOpen else { return }
+        pushTurnOpen = true
         do {
-            try AudioSessionManager.activate(music: true)
-            ownsAudio = true
-            note("Music mode: your music keeps playing. The iPhone's own microphone listens.")
-            audioActivated()
+            try AudioSessionManager.activate(AudioPlan.plan(for: .push))
         } catch {
-            finishCall("The microphone could not be opened.")
+            pushTurnOpen = false
+            lastError = "The microphone could not be opened."
+            return
+        }
+        ownsAudio = true
+        armed = true
+        set(.connecting, "Opening the mic")
+        audioActivated()
+    }
+
+    /// The turn is over: close the mic and let the audio go with "notify others", so his music resumes.
+    private func endPushTurn() {
+        guard pushTurnOpen || pushAudioHeld, !callKit.hasCall else { return }
+        pushTurnOpen = false
+        pushAudioHeld = false
+        ownsAudio = false
+        let listener = self.listener
+        Task {
+            await listener.stop()
+            guard !self.pushTurnOpen else { return }   // he pushed again meanwhile
+            AudioSessionManager.deactivate()
+            if self.isInCall { self.keepAlive.start() }
         }
     }
+
+    @ObservationIgnored private var pushTurnOpen = false
+    @ObservationIgnored private var pushAudioHeld = false   // the session is taken only to read a question aloud, no mic
 
     private func startWithoutCallKit(_ reason: String) {
         guard isInCall else { return }
@@ -1717,7 +1754,7 @@ struct Turn: Identifiable, Equatable {
                 } catch {
                     // the audio can still be settling just after a ring is answered: one more try
                     try? await Task.sleep(for: .milliseconds(600))
-                    try? AudioSessionManager.configure(music: self.musicMode && !self.callKit.hasCall)
+                    try? AudioSessionManager.configure(AudioPlan.plan(for: self.listenMode))
                     try await listener.start(endOfTurn: VoiceTuning.pause, endOfTurnInterim: VoiceTuning.pause + 0.8)
                 }
             } catch {
@@ -1862,6 +1899,8 @@ struct Turn: Identifiable, Equatable {
         let listener = self.listener
         let releaseAudio = ownsAudio
         ownsAudio = false
+        pushTurnOpen = false
+        pushAudioHeld = false
         holdAwake("call ended")
         Task {
             await listener.stop()
@@ -1898,6 +1937,7 @@ struct Turn: Identifiable, Equatable {
             if fresh, spokenCues { speaker.cue("Listening") }   // his turn: the mic is open
         } else {
             set(.idle, line ?? Say.pressToTalk)   // PUSH mode between turns: in the call, mic closed
+            endPushTurn()
         }
     }
 

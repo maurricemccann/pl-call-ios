@@ -61,9 +61,6 @@ struct SettingsView: View {
         Binding(get: { model.shortAnswers }, set: { model.setShortAnswers($0) })
     }
 
-    private var music: Binding<Bool> {
-        Binding(get: { model.musicMode }, set: { model.setMusicMode($0) })
-    }
 
     private func sessionRow(_ id: String?, title: String) -> some View {
         Button {
@@ -118,7 +115,7 @@ struct SettingsView: View {
                             Text("TAP").tag(ListenMode.tap)
                         }
                         .pickerStyle(.segmented)
-                        Text("AUTO listens all the time. PUSH opens the mic only when you press Talk. TAP hears and says nothing: every question waits as buttons until you tap one. Changing between TAP and the others hangs up the call.")
+                        Text("AUTO is a phone call: the mic stays open and no other media plays. PUSH opens the mic only while you press Talk: your music pauses then and resumes after. TAP never opens the mic and your music or video plays on at full volume: every question waits as buttons until you tap one. Changing between TAP and the others hangs up the call.")
                             .plFont(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -163,7 +160,6 @@ struct SettingsView: View {
                         Text("Lower other audio while on a call")
                             .plFont(.body)
                     }
-                    toggleRow("Music mode", "No phone-style call, so your music keeps playing. Uses the iPhone\u{2019}s own microphone. Starts with the next call.", isOn: music)
                 }
 
                 Section {
