@@ -333,6 +333,16 @@ final class TapModeTests: XCTestCase {
         XCTAssertEqual(answers?.first?["options"] as? [String], ["A", "my own words"])
     }
 
+    func testLongOptionLabelRoundTripsIntact() throws {
+        let long = "Rewire it properly (Recommended): one sync, one place, both wired the same way"   // 40+ chars, as the PC now keeps up to 80
+        XCTAssertGreaterThan(long.count, 40)
+        let ask = PermissionRequest.Question(question: "Which?", header: "", options: [long, "Keep it"])
+        let body = BridgeBody.dialog(requestId: "q-1", toolUseId: nil, question: ask, option: 0, input: nil)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any]
+        let answers = object?["answers"] as? [[String: Any]]
+        XCTAssertEqual(answers?.first?["options"] as? [String], [long])   // the dialog answer carries the stored label, never a shortened one
+    }
+
     // MARK: late answers (a watch, Lock Screen or notice button reaching a process that lost the ask)
 
     private func blocking(_ id: String, seq: Int) -> SessionEvent {
